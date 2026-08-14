@@ -169,3 +169,46 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
     assert [f for f in validate_motion_table(watch, "ETH-SL-E2", "watch", 100.0)
             if not f.passed] == []
+
+
+def test_loaded_headimu_gravity_passes_the_validator(tmp_path):
+    """The magnitude-gated headphone gravity conversion is the riskiest part
+    of this adapter; push it through the physical gate, not just the
+    adapter's own np.allclose(..., 1.0) - the check should come from the
+    validator agreeing, not from the adapter agreeing with itself."""
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    head = a.load(a.discover(tmp_path)[0]).tables["headimu"]
+    findings = validate_motion_table(head, "ETH-SL-E2", "headimu", 100.0)
+    gravity_finding = next(f for f in findings if f.check == "gravity_norm")
+    assert gravity_finding.passed
+    assert S.GRAVITY_NORM_BAND[0] <= gravity_finding.observed <= S.GRAVITY_NORM_BAND[1]
+
+
+def test_watch_hz_nominal_is_parsed_from_metadata_sample_rate(tmp_path):
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    meta = pd.read_csv(d / "Metadata.csv")
+    meta["sampleRateMs"] = "20|10|"          # Wrist Motion at 20 ms -> 50 Hz
+    meta.to_csv(d / "Metadata.csv", index=False)
+
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["watch_hz_nominal"] == 50.0
+
+
+def test_watch_hz_nominal_falls_back_to_measured_when_sample_rate_is_absent(tmp_path):
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    meta = pd.read_csv(d / "Metadata.csv")
+    meta = meta.drop(columns=["sampleRateMs"])
+    meta.to_csv(d / "Metadata.csv", index=False)
+
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["watch_hz_nominal"] is None
+    # The measured rate is still recorded - just downstream, by the validator.
+    findings = validate_motion_table(bundle.tables["watch"], "ETH-SL-E2", "watch", None)
+    rate_finding = next(f for f in findings if f.check == "sample_rate")
+    assert rate_finding.passed
+    assert rate_finding.observed == pytest.approx(100.0, rel=0.05)

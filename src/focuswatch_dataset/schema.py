@@ -44,6 +44,9 @@ ACCEL_FORBIDDEN_BANDS = ((0.2, 0.9), (5.0, 15.0))
 
 GRAVITY_NORM_BAND = (0.99, 1.01)
 GRAVITY_NORM_MAX_IQR = 0.01
+# Why: g-scale gravity sits near 1.0, SI (m/s2) sits near 9.80665 - a wide
+# margin between the two makes a median-norm check unambiguous.
+GRAVITY_SI_NORM_THRESHOLD = 2.0
 GYRO_MEDIAN_BAND = (0.005, 2.0)
 GYRO_P95_MAX = 20.0          # deg/s data would sit far above this
 QUAT_NORM_BAND = (0.999, 1.001)

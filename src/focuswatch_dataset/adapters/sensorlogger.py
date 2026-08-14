@@ -3,10 +3,11 @@
 Unit handling follows the app's documented behaviour: acceleration channels
 are in g when `standardisation` is off and in SI when it is on, but headphone
 gravity is always written in m/s2 regardless of the flag - the same recording
-can carry both. Pen strokes and phase markers live in the session JSON, not
-in the (empty) `Annotation.csv`. `WatchAccelerometerUncalibrated.csv` is a
-second, raw total-acceleration stream with its own rate and goes to its own
-table.
+can carry both. See
+https://github.com/tszheichoi/awesome-sensor-logger/blob/main/UNITS.md. Pen
+strokes and phase markers live in the session JSON, not in the (empty)
+`Annotation.csv`. `WatchAccelerometerUncalibrated.csv` is a second, raw
+total-acceleration stream with its own rate and goes to its own table.
 """
 from __future__ import annotations
 
@@ -24,14 +25,35 @@ COHORT = "ETH-SL"
 
 _DOT_TYPES = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
 
-# Why: g-scale gravity sits near 1.0, SI (m/s2) sits near 9.80665 - a wide
-# margin between the two makes a magnitude check unambiguous.
-_GRAVITY_SI_NORM_THRESHOLD = 2.0
+_WRIST_SENSOR_NAME = "Wrist Motion"
 
 
 def _standardisation(meta_path: Path) -> bool:
     meta = pd.read_csv(meta_path)
     return str(meta["standardisation"].iloc[0]).strip().lower() == "true"
+
+
+def _watch_hz_nominal(meta_path: Path) -> float | None:
+    """Nominal wrist rate from Metadata.csv's two parallel pipe-lists.
+
+    `sensors` and `sampleRateMs` are indexed the same way (stream name to its
+    period in ms); some streams, like Annotation, carry no rate at all. If
+    the Wrist Motion entry is missing, blank or unparseable, no nominal rate
+    is declared and the validator falls back to the measured rate.
+    """
+    meta = pd.read_csv(meta_path)
+    sensors = str(meta.get("sensors", pd.Series([""])).iloc[0]).split("|")
+    rates = str(meta.get("sampleRateMs", pd.Series([""])).iloc[0]).split("|")
+    if _WRIST_SENSOR_NAME not in sensors:
+        return None
+    idx = sensors.index(_WRIST_SENSOR_NAME)
+    if idx >= len(rates) or not rates[idx].strip():
+        return None
+    try:
+        ms = float(rates[idx])
+    except ValueError:
+        return None
+    return 1000.0 / ms if ms > 0 else None
 
 
 def _harmonise_gravity_to_g(xyz: np.ndarray) -> np.ndarray:
@@ -43,7 +65,7 @@ def _harmonise_gravity_to_g(xyz: np.ndarray) -> np.ndarray:
     same way and is idempotent, so an already-g column is never divided twice.
     """
     median_norm = float(np.median(np.linalg.norm(xyz, axis=1)))
-    if median_norm > _GRAVITY_SI_NORM_THRESHOLD:
+    if median_norm > S.GRAVITY_SI_NORM_THRESHOLD:
         return xyz / S.G_TO_MS2
     return xyz
 
@@ -81,7 +103,7 @@ class SensorLoggerAdapter:
             tables["markers"] = markers
 
         meta = {
-            "watch_hz_nominal": 100.0,
+            "watch_hz_nominal": _watch_hz_nominal(d / "Metadata.csv"),
             "has_gravity": "gravity_x" in tables["watch"].columns,
             "has_quaternion": "quat_x" in tables["watch"].columns,
             "has_watch_rawaccel": "watch_rawaccel" in tables,
@@ -89,7 +111,7 @@ class SensorLoggerAdapter:
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",
             "time_domain": "backend_wall_clock", "time_alignment": "shared_clock",
-            "protocol_id": "eth_ege_web", "study_mode": "study",
+            "protocol_id": "eth_web", "study_mode": "study",
             "pen_xy_unit": "webapp_raw", "pen_pressure_scale": "webapp_force",
             "src_standardisation": si,
             "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
@@ -154,7 +176,7 @@ class SensorLoggerAdapter:
                 "t_ns": to_unix_ns(np.array([e["t_ms"] for e in others], dtype=np.int64), "ms"),
                 "event": [e["event"] for e in others],
                 "task_id": "", "task_name": "", "task_index": -1,
-                "task_category": "", "protocol_id": "eth_ege_web",
+                "task_category": "", "protocol_id": "eth_web",
                 "src_payload": [json.dumps(e.get("payload", {})) for e in others],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
             }))

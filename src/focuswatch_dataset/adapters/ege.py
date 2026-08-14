@@ -55,7 +55,11 @@ class EgeAdapter:
             tables["markers"] = self._markers(events)
 
         meta = {
-            "watch_hz_nominal": 100.0,
+            # Why: this source states no nominal wrist rate anywhere (no rate
+            # column in imu_samples_rows.csv or sensor_session.csv); declaring
+            # one anyway would fabricate a fact the source doesn't carry. The
+            # validator falls back to the measured rate.
+            "watch_hz_nominal": None,
             # Why: derived from the emitted table, not asserted independently -
             # a hardcoded flag and the actual columns can drift out of sync.
             "has_gravity": "gravity_x" in watch.columns,
@@ -69,7 +73,7 @@ class EgeAdapter:
             "gravity_source": "none",
             "time_domain": "backend_wall_clock",
             "time_alignment": "shared_clock",
-            "protocol_id": "eth_ege_web",
+            "protocol_id": "eth_web",
             "study_mode": "study",
             "pen_xy_unit": "webapp_raw",
             "pen_pressure_scale": "webapp_force",
@@ -136,7 +140,7 @@ class EgeAdapter:
             "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
             "event": raw["event_type"].astype(str),
             "task_id": "", "task_name": "", "task_index": -1,
-            "task_category": "", "protocol_id": "eth_ege_web",
+            "task_category": "", "protocol_id": "eth_web",
             "src_payload": raw.get("payload", ""),
             # Why: t_session_ms is a fixed column of events.csv in the documented
             # source schema; its absence means the format changed and that must
