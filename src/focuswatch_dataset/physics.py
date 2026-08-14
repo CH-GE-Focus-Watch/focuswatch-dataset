@@ -29,6 +29,13 @@ class NormStats:
 def norm_stats(vectors: np.ndarray) -> NormStats:
     v = np.asarray(vectors, dtype=float)
     v = v[np.isfinite(v).all(axis=1)]
+    if v.size == 0:
+        # Why: a fully non-finite column is realistic (forward-only quaternion
+        # capture leaves older recordings empty); a NaN median fails every band
+        # check downstream, so the condition stays loud without an opaque
+        # np.percentile crash on an empty array.
+        return NormStats(median=float("nan"), p05=float("nan"), p95=float("nan"),
+                          iqr=float("nan"), mean=float("nan"), std=float("nan"), n=0)
     n = np.linalg.norm(v, axis=1)
     q25, q75 = np.percentile(n, [25, 75])
     return NormStats(
@@ -54,6 +61,8 @@ def still_mask(gyro: np.ndarray, fs_hz: float, window_s: float = 2.0,
     """Samples whose surrounding window stays below `threshold` rad/s."""
     win = max(int(round(window_s * fs_hz)), 1)
     n = np.linalg.norm(np.asarray(gyro, dtype=float), axis=1)
+    # Why: min_periods=1 gives the first/last half-window samples a partial-window
+    # estimate instead of NaN, so the mask stays boolean over the whole series.
     rolling_max = pd.Series(n).rolling(win, center=True, min_periods=1).max().to_numpy()
     return rolling_max < threshold
 
