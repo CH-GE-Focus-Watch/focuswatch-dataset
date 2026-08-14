@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from .. import schema as S
 from ..time_axis import sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
 
@@ -29,9 +27,8 @@ class Ml4scsAdapter:
         refs = []
         for f in sorted((root / "watch").glob("*_watch.csv")):
             sid = f.name.removesuffix("_watch.csv")
-            if sid not in sessions.index:
-                raise ValueError(f"{sid} has no row in sessions.csv")
-            person = str(sessions.loc[sid, "person_id"]).strip()
+            row = self._session_row(sessions, sid)
+            person = str(row["person_id"]).strip()
             # Why: a placeholder here would collapse several recordings onto one
             # participant, and the article's participant count would silently lie.
             if not person or person.lower() in {"nan", "none"}:
@@ -39,11 +36,19 @@ class Ml4scsAdapter:
             refs.append(RecordingRef(f"{COHORT}-{sid}", f"{COHORT}-{person}", COHORT, self.name, root))
         return refs
 
+    @staticmethod
+    def _session_row(sessions: pd.DataFrame, sid: str) -> pd.Series:
+        if sid not in sessions.index:
+            raise ValueError(f"{sid} has no row in sessions.csv")
+        return sessions.loc[sid]
+
     def load(self, ref: RecordingRef) -> RecordingBundle:
         sid = ref.recording_id.removeprefix(f"{COHORT}-")
         root = ref.path
         sessions = pd.read_csv(root / "sessions.csv").set_index("session_id")
-        row = sessions.loc[sid]
+        # Why: a stale or hand-built RecordingRef can point at a session no longer
+        # in sessions.csv; without this guard `.loc[sid]` raises a raw KeyError.
+        row = self._session_row(sessions, sid)
 
         watch = self._watch(root / "watch" / f"{sid}_watch.csv")
         tables = {"watch": watch}
@@ -70,6 +75,7 @@ class Ml4scsAdapter:
             "pen_xy_unit": "ncode_grid",
             "pen_pressure_scale": "moleskine_raw",
             "session_start_ns": self._session_start_ns(row.get("start_time")),
+            "pen_delta_sigma": self._pen_delta_sigma(row.get("alignment_sigma")),
         }
         return RecordingBundle(ref, tables, meta)
 
@@ -85,6 +91,14 @@ class Ml4scsAdapter:
         # utc=True accepts both the offset-carrying and the naive form found in
         # sessions.csv and returns nanoseconds since the epoch either way.
         return int(pd.to_datetime(start_time, utc=True).value)
+
+    @staticmethod
+    def _pen_delta_sigma(alignment_sigma: object) -> float:
+        # Why: the offset delta itself is not in the export - only its confidence
+        # score is. Baking in an estimated delta would risk irreparable labels.
+        if alignment_sigma is None or pd.isna(alignment_sigma):
+            return float("nan")
+        return float(alignment_sigma)
 
     def _watch(self, path: Path) -> pd.DataFrame:
         raw = pd.read_csv(path)
