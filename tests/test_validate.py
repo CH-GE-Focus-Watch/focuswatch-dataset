@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-import pytest
 from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
+from focuswatch_dataset.time_axis import median_rate_hz
 from focuswatch_dataset.validate import (
     ValidationReport, check_coverage, validate_motion_table, validate_pen_table,
     validate_recording,
@@ -202,3 +202,53 @@ def test_coverage_rejects_a_silently_skipped_quaternion_check():
     findings += validate_recording("R1", {"watch": df}, {})
     problems = check_coverage(manifest, findings)
     assert any("quat_norm" in p for p in problems)
+
+
+def test_coverage_rejects_a_silently_skipped_gyro_check():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": True,
+                              "has_gravity": True, "has_headimu": False, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False}])
+    # An adapter that dropped the gyro columns produces no gyro_range finding at all,
+    # even though gravity and quaternion are still present.
+    df = make_watch().drop(columns=list(S.COLUMNS[S.Quantity.GYRO]))
+    findings = validate_motion_table(df, "R1", "watch", 100.0)
+    findings += validate_recording("R1", {"watch": df}, {})
+    problems = check_coverage(manifest, findings)
+    assert any("gyro_range" in p for p in problems)
+
+
+def test_coverage_requires_a_rawaccel_table_that_never_arrived():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": False, "has_pen": False,
+                              "has_watch_rawaccel": True, "has_markers": False,
+                              "has_attention": False}])
+    # No findings at all: an adapter that dropped the rawaccel table entirely.
+    problems = check_coverage(manifest, [])
+    assert any("time_monotonic" in p for p in problems)
+    assert any("sample_rate" in p for p in problems)
+    assert any("accel_semantic_band" in p for p in problems)
+    assert any("gyro_range" in p for p in problems)
+    assert any("time_magnitude" in p for p in problems)
+
+
+def test_sample_rate_still_emitted_with_no_nominal_rate_declared():
+    df = make_watch(fs=100.0)
+    findings = validate_motion_table(df, "R1", "watch", None)
+    f = next(x for x in findings if x.check == "sample_rate")
+    measured = median_rate_hz(df["t_ns"].to_numpy(dtype=np.int64))
+    assert f.passed
+    assert f.observed == round(measured, 3)
+
+
+def test_coverage_requires_time_magnitude_for_a_pen_only_recording():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": False, "has_pen": True,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False}])
+    # An adapter that produced pen findings but never ran the cross-table
+    # recording-level checks (e.g. crashed before calling validate_recording).
+    df = pd.DataFrame({"t_ns": [1, 2], "dot_type": ["PEN_DOWN", "PEN_UP"], "x": [1.0, 2.0], "y": [1.0, 2.0]})
+    findings = validate_pen_table(df, "R1")
+    problems = check_coverage(manifest, findings)
+    assert any("time_magnitude" in p for p in problems)

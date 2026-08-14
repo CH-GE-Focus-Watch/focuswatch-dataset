@@ -67,10 +67,16 @@ def validate_motion_table(df: pd.DataFrame, recording_id: str, modality: str,
     add("time_monotonic", S.TIME_COLUMN, int(np.sum(np.diff(t) < 0)),
         "no backward steps", bool(np.all(np.diff(t) >= 0)))
 
+    measured = median_rate_hz(t)
     if nominal_hz:
-        measured = median_rate_hz(t)
         add("sample_rate", S.TIME_COLUMN, round(measured, 3), f"{nominal_hz} Hz +-20%",
             abs(measured - nominal_hz) / nominal_hz < S.RATE_TOLERANCE)
+    else:
+        # Why: check_coverage requires sample_rate unconditionally; a source that
+        # declares no nominal rate for this table (e.g. Ege's head-IMU) must still
+        # produce a finding, or coverage fails on every build of that recording.
+        add("sample_rate", S.TIME_COLUMN, round(measured, 3),
+            "no nominal rate declared; measured only", True)
 
     for q, band in ((S.Quantity.ACCEL_USER, S.ACCEL_USER_BAND),
                     (S.Quantity.ACCEL_TOTAL, S.ACCEL_TOTAL_BAND)):
@@ -213,7 +219,11 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
 
 # Which checks a recording must have produced, derived from its manifest flags.
 # A skipped check and a passed check are otherwise indistinguishable.
-_REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band")
+_REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band", "gyro_range")
+# Every manifest flag backed by its own table in `validate_recording`'s `tables`
+# dict, and therefore expected to carry a time_magnitude finding.
+_MODALITY_FLAGS = ("has_watch", "has_watch_rawaccel", "has_headimu", "has_pen",
+                   "has_markers", "has_attention")
 
 
 def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]:
@@ -230,10 +240,11 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
             if check not in seen:
                 problems.append(f"{rid}: {check} never ran ({reason})")
 
-        if row.get("has_watch") or row.get("has_headimu"):
+        if row.get("has_watch") or row.get("has_headimu") or row.get("has_watch_rawaccel"):
             for check in _REQUIRED_MOTION_CHECKS:
                 require(check, "motion table present")
-            require("time_magnitude", "motion table present")
+        if any(row.get(flag) for flag in _MODALITY_FLAGS):
+            require("time_magnitude", "recording declares at least one modality")
         if row.get("has_gravity"):
             require("gravity_norm", "has_gravity is true")
         if row.get("has_quaternion"):
