@@ -1,13 +1,28 @@
+import importlib
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
 from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
+from focuswatch_dataset.adapters import base
 from focuswatch_dataset.adapters.ege import EgeAdapter
 from focuswatch_dataset.validate import validate_motion_table
 
 T0 = 1780577357025
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry():
+    # Why: same pattern as tests/test_adapter_base.py:12-17 - register() mutates
+    # a module-level dict, so a test that pops/re-adds entries must not leak
+    # into later tests in the same session.
+    snapshot = dict(base._REGISTRY)
+    yield
+    base._REGISTRY.clear()
+    base._REGISTRY.update(snapshot)
 
 
 def write_fixture(root, sid="T6", n=3000):
@@ -80,7 +95,7 @@ def test_acceleration_is_declared_total(tmp_path):
     assert bundle.meta["accel_calibration"] == "raw_uncalibrated"
 
 
-def test_quaternion_is_reordered_to_scalar_last(tmp_path):
+def test_quaternion_columns_pass_through_already_scalar_last(tmp_path):
     write_fixture(tmp_path)
     a = EgeAdapter()
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
@@ -126,3 +141,28 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
     assert [f for f in validate_motion_table(watch, "ETH-EGE-T6", "watch", 100.0)
             if not f.passed] == []
+
+
+def test_importing_the_adapters_package_registers_ege():
+    """`adapters/__init__.py`'s `from . import ege` line must do the registering.
+
+    Every other test in this module imports the `ege` submodule directly, which
+    fires its module-level register() regardless of what __init__.py does - that
+    would make this test pass even if the package-level wiring were deleted. To
+    actually exercise __init__.py's own import statement, the entry it already
+    produced (at collection time, via this file's own direct import above) is
+    scrubbed from both the registry and the import cache first, then only the
+    package - never the ege submodule - is re-imported.
+    """
+    base._REGISTRY.pop("ege", None)
+    saved = {name: sys.modules.pop(name, None)
+             for name in ("focuswatch_dataset.adapters", "focuswatch_dataset.adapters.ege")}
+    try:
+        importlib.import_module("focuswatch_dataset.adapters")
+        assert base.get_adapter("ege").name == "ege"
+    finally:
+        for name, mod in saved.items():
+            if mod is not None:
+                sys.modules[name] = mod
+            else:
+                sys.modules.pop(name, None)

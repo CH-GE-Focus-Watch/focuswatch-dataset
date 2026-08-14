@@ -42,7 +42,8 @@ class EgeAdapter:
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
         d = ref.path
-        tables = {"watch": self._motion(d / "imu_samples_rows.csv")}
+        watch = self._motion(d / "imu_samples_rows.csv")
+        tables = {"watch": watch}
         head = d / "head_motion_samples_rows.csv"
         if head.exists():
             tables["headimu"] = self._motion(head)
@@ -55,14 +56,16 @@ class EgeAdapter:
 
         meta = {
             "watch_hz_nominal": 100.0,
-            "has_gravity": False,
-            "has_quaternion": True,
+            # Why: derived from the emitted table, not asserted independently -
+            # a hardcoded flag and the actual columns can drift out of sync.
+            "has_gravity": "gravity_x" in watch.columns,
+            "has_quaternion": "quat_x" in watch.columns,
             "accel_semantics": "total",
             # Established by a still-window test on the real corpus: the norm sits at
             # 0.9954 (T6) / 0.9932 (T7), a persistent per-device bias. A recombination
             # of userAcceleration and gravity would sit at exactly 1.000.
             "accel_calibration": "raw_uncalibrated",
-            "accel_still_bias": self._still_bias(tables["watch"]),
+            "accel_still_bias": self._still_bias(watch),
             "gravity_source": "none",
             "time_domain": "backend_wall_clock",
             "time_alignment": "shared_clock",
@@ -135,7 +138,10 @@ class EgeAdapter:
             "task_id": "", "task_name": "", "task_index": -1,
             "task_category": "", "protocol_id": "eth_ege_web",
             "src_payload": raw.get("payload", ""),
-            "src_t_session_ms": raw.get("t_session_ms"),
+            # Why: t_session_ms is a fixed column of events.csv in the documented
+            # source schema; its absence means the format changed and that must
+            # fail loudly here, not degrade to a silent None in the output.
+            "src_t_session_ms": raw["t_session_ms"],
         })
         return sort_stable_by_time(out)
 
