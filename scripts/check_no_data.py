@@ -7,15 +7,16 @@ from pathlib import Path
 
 MAX_BYTES = 1_048_576
 
-# Why: names seen in the source corpora. Fixtures must not look like real captures.
-DATA_NAME_PATTERNS = (
-    re.compile(r"_watch\.csv$"),
-    re.compile(r"_pen\.csv$"),
-    re.compile(r"_markers\.csv$"),
-    re.compile(r"airpod_motion.*\.csv$"),
-    re.compile(r"^(WristMotion|Headphone|WatchAccelerometerUncalibrated)\.csv$"),
-    re.compile(r"\.zip$"),
-    re.compile(r"\.parquet$"),
+# Why: this package never legitimately tracks these formats — fixtures live
+# only under pytest's tmp_path, never committed. A type rule can't lag the
+# corpus the way a denylist of known source filenames would.
+BLOCKED_EXTENSIONS = {".csv", ".parquet", ".zip", ".jsonl"}
+
+# Why: .txt is otherwise legitimate (requirements.txt, docs); only these two
+# AirPods ground-truth/protocol filename shapes are capture data.
+TXT_DATA_PATTERNS = (
+    re.compile(r"_ground_truth_"),
+    re.compile(r"_protokoll_"),
 )
 
 
@@ -24,10 +25,13 @@ def check_paths(paths: list[Path], max_bytes: int = MAX_BYTES) -> list[str]:
     for p in paths:
         if not p.is_file():
             continue
-        if any(pat.search(p.name) for pat in DATA_NAME_PATTERNS):
-            violations.append(f"{p}: filename matches a capture-data pattern")
+        suffix = p.suffix.lower()
+        if suffix in BLOCKED_EXTENSIONS:
+            violations.append(f"{p}: extension {suffix!r} is always blocked (type rule)")
+        elif suffix == ".txt" and any(pat.search(p.name) for pat in TXT_DATA_PATTERNS):
+            violations.append(f"{p}: filename matches a capture-data pattern (name rule)")
         elif p.stat().st_size > max_bytes:
-            violations.append(f"{p}: {p.stat().st_size} bytes exceeds {max_bytes}")
+            violations.append(f"{p}: {p.stat().st_size} bytes exceeds {max_bytes} (size rule)")
     return violations
 
 

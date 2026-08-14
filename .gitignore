@@ -6,5 +6,6 @@ __pycache__/
 .pytest_cache/
 out/
 data/
+alldata/
 *.parquet
 *.zip
