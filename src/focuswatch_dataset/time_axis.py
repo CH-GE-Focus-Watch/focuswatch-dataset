@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from focuswatch_dataset.schema import TIME_COLUMN
+
 _NS_PER = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 
 # Magnitude brackets for a contemporary wall clock. Anything below 1e8 cannot be one.
@@ -11,6 +13,12 @@ _BRACKETS = (("s", 1e9, 1e10), ("ms", 1e12, 1e13), ("us", 1e15, 1e16), ("ns", 1e
 
 
 def classify_time_unit(values: np.ndarray) -> str:
+    """Classify by order of magnitude only.
+
+    A session-relative clock in fine-grained units over a long enough session can
+    reach the same magnitude as an absolute epoch and be misclassified as
+    absolute; callers who know their unit should pass it rather than infer it.
+    """
     finite = np.asarray(values, dtype=float)
     finite = finite[np.isfinite(finite)]
     if finite.size == 0:
@@ -43,7 +51,7 @@ def to_unix_ns(values: np.ndarray, unit: str) -> np.ndarray:
     return whole.astype(np.int64) * factor + np.rint(frac * factor).astype(np.int64)
 
 
-def sort_stable_by_time(df: pd.DataFrame, column: str = "t_ns") -> pd.DataFrame:
+def sort_stable_by_time(df: pd.DataFrame, column: str = TIME_COLUMN) -> pd.DataFrame:
     # Why: batched captures share timestamps; an unstable sort reorders tied samples.
     return df.sort_values(column, kind="stable").reset_index(drop=True)
 
