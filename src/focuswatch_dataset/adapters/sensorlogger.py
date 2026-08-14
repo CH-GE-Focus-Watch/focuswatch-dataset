@@ -1,0 +1,164 @@
+"""Adapter for the Sensor Logger iOS app export.
+
+Unit handling follows the app's documented behaviour: acceleration channels
+are in g when `standardisation` is off and in SI when it is on, but headphone
+gravity is always written in m/s2 regardless of the flag - the same recording
+can carry both. Pen strokes and phase markers live in the session JSON, not
+in the (empty) `Annotation.csv`. `WatchAccelerometerUncalibrated.csv` is a
+second, raw total-acceleration stream with its own rate and goes to its own
+table.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from .. import schema as S
+from ..time_axis import sort_stable_by_time, to_unix_ns
+from .base import RecordingBundle, RecordingRef, register
+
+COHORT = "ETH-SL"
+
+_DOT_TYPES = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
+
+# Why: g-scale gravity sits near 1.0, SI (m/s2) sits near 9.80665 - a wide
+# margin between the two makes a magnitude check unambiguous.
+_GRAVITY_SI_NORM_THRESHOLD = 2.0
+
+
+def _standardisation(meta_path: Path) -> bool:
+    meta = pd.read_csv(meta_path)
+    return str(meta["standardisation"].iloc[0]).strip().lower() == "true"
+
+
+def _harmonise_gravity_to_g(xyz: np.ndarray) -> np.ndarray:
+    """Convert a gravity column to g if its measured magnitude shows it is m/s2.
+
+    Gated on the measured norm, never on which table produced the column: the
+    wrist stream is in g or m/s2 depending on `standardisation`, the headphone
+    stream is documented as always m/s2. A magnitude check treats both the
+    same way and is idempotent, so an already-g column is never divided twice.
+    """
+    median_norm = float(np.median(np.linalg.norm(xyz, axis=1)))
+    if median_norm > _GRAVITY_SI_NORM_THRESHOLD:
+        return xyz / S.G_TO_MS2
+    return xyz
+
+
+class SensorLoggerAdapter:
+    name = "sensorlogger"
+
+    def discover(self, root: Path) -> list[RecordingRef]:
+        refs = []
+        for d in sorted(p for p in root.iterdir() if (p / "WristMotion.csv").exists()):
+            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ETH-{d.name}", "ETH", self.name, d))
+        return refs
+
+    def load(self, ref: RecordingRef) -> RecordingBundle:
+        d = ref.path
+        si = _standardisation(d / "Metadata.csv")
+        # Why: standardisation on means the source already wrote SI units, so
+        # dividing by G_TO_MS2 harmonises back to g; off means it is already g.
+        accel_factor = 1.0 / S.G_TO_MS2 if si else 1.0
+
+        tables = {"watch": self._motion(d / "WristMotion.csv", accel_factor)}
+
+        head = d / "Headphone.csv"
+        if head.exists():
+            tables["headimu"] = self._motion(head, accel_factor)
+
+        rawaccel = d / "WatchAccelerometerUncalibrated.csv"
+        if rawaccel.exists():
+            tables["watch_rawaccel"] = self._rawaccel(rawaccel, accel_factor)
+
+        pen, markers = self._from_session_json(d)
+        if pen is not None:
+            tables["pen"] = pen
+        if markers is not None:
+            tables["markers"] = markers
+
+        meta = {
+            "watch_hz_nominal": 100.0,
+            "has_gravity": "gravity_x" in tables["watch"].columns,
+            "has_quaternion": "quat_x" in tables["watch"].columns,
+            "has_watch_rawaccel": "watch_rawaccel" in tables,
+            "has_pen": "pen" in tables,
+            "accel_semantics": "user", "accel_calibration": "fused",
+            "gravity_source": "measured",
+            "time_domain": "backend_wall_clock", "time_alignment": "shared_clock",
+            "protocol_id": "eth_ege_web", "study_mode": "study",
+            "pen_xy_unit": "webapp_raw", "pen_pressure_scale": "webapp_force",
+            "src_standardisation": si,
+            "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
+        }
+        return RecordingBundle(ref, tables, meta)
+
+    @staticmethod
+    def _session_start_ns(meta_path: Path) -> int | None:
+        epoch_ms = pd.read_csv(meta_path)["recording epoch time"].iloc[0]
+        return int(epoch_ms) * 1_000_000 if pd.notna(epoch_ms) else None
+
+    def _motion(self, path: Path, accel_factor: float) -> pd.DataFrame:
+        raw = pd.read_csv(path)
+        # Why: `time` is already int64 Unix nanoseconds - to_unix_ns takes the
+        # integer path here and performs no float64 scaling.
+        out = pd.DataFrame({"t_ns": to_unix_ns(raw["time"].to_numpy(), "ns")})
+        out[list(S.COLUMNS[S.Quantity.ACCEL_USER])] = (
+            raw[["accelerationX", "accelerationY", "accelerationZ"]].astype(float).to_numpy()
+            * accel_factor)
+        out[list(S.COLUMNS[S.Quantity.GYRO])] = (
+            raw[["rotationRateX", "rotationRateY", "rotationRateZ"]].astype(float).to_numpy())
+        out[list(S.COLUMNS[S.Quantity.GRAVITY])] = _harmonise_gravity_to_g(
+            raw[["gravityX", "gravityY", "gravityZ"]].astype(float).to_numpy())
+        out[list(S.COLUMNS[S.Quantity.QUAT])] = (
+            raw[["quaternionX", "quaternionY", "quaternionZ", "quaternionW"]].astype(float).to_numpy())
+        return sort_stable_by_time(out)
+
+    def _rawaccel(self, path: Path, factor: float) -> pd.DataFrame:
+        raw = pd.read_csv(path)
+        out = pd.DataFrame({"t_ns": to_unix_ns(raw["time"].to_numpy(), "ns")})
+        out[list(S.COLUMNS[S.Quantity.ACCEL_TOTAL])] = raw[["x", "y", "z"]].astype(float).to_numpy() * factor
+        return sort_stable_by_time(out)
+
+    def _from_session_json(self, d: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+        candidates = list(d.glob("*.json"))
+        if len(candidates) != 1:
+            raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
+        events = json.loads(candidates[0].read_text())["events"]
+
+        strokes = [e for e in events if e["event"] in _DOT_TYPES]
+        pen = None
+        if strokes:
+            pen = sort_stable_by_time(pd.DataFrame({
+                # Why: no float cast. float64 resolves only to 256 ns at wall-clock
+                # magnitude, which would shift every timestamp and can collapse
+                # neighbouring samples onto the same value.
+                "t_ns": to_unix_ns(np.array([e["t_ms"] for e in strokes], dtype=np.int64), "ms"),
+                "dot_type": [_DOT_TYPES[e["event"]] for e in strokes],
+                "x": [e["payload"].get("x", np.nan) for e in strokes],
+                "y": [e["payload"].get("y", np.nan) for e in strokes],
+                "pressure": [e["payload"].get("force", np.nan) for e in strokes],
+                "tilt_x": [e["payload"].get("tilt", {}).get("x", np.nan) for e in strokes],
+                "tilt_y": [e["payload"].get("tilt", {}).get("y", np.nan) for e in strokes],
+                # Why: the pen's own clock, roughly 749 days behind wall clock. Metadata only.
+                "src_timestamp": [e["payload"].get("timestamp", np.nan) for e in strokes],
+            }))
+
+        others = [e for e in events if e["event"] not in _DOT_TYPES]
+        markers = None
+        if others:
+            markers = sort_stable_by_time(pd.DataFrame({
+                "t_ns": to_unix_ns(np.array([e["t_ms"] for e in others], dtype=np.int64), "ms"),
+                "event": [e["event"] for e in others],
+                "task_id": "", "task_name": "", "task_index": -1,
+                "task_category": "", "protocol_id": "eth_ege_web",
+                "src_payload": [json.dumps(e.get("payload", {})) for e in others],
+                "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
+            }))
+        return pen, markers
+
+
+register(SensorLoggerAdapter())
