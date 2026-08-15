@@ -83,6 +83,73 @@ def test_strict_build_aborts_on_a_physical_failure(tmp_path, monkeypatch):
         build_dataset(src, tmp_path / "out", strict=True)
 
 
+# --- I2: a failed strict build must not write into `out` -----------------
+
+def test_strict_abort_does_not_overwrite_a_preexisting_good_bundles_report(tmp_path):
+    """Before this fix, build.py wrote the abort's validation_report.json
+    straight into `out` - overwriting a previous good build's report with
+    failures that describe a validation run over different (mutated-band)
+    data, not the bundle sitting beside it on disk.
+    """
+    from focuswatch_dataset import schema as S
+
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+    build_dataset(src, out)
+    good_report = (out / "validation_report.json").read_text()
+    good_files = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(S, "ACCEL_USER_BAND", (0.9, 1.1))
+        with pytest.raises(RuntimeError, match="validation failed"):
+            build_dataset(src, out, strict=True)
+
+    assert (out / "validation_report.json").read_text() == good_report
+    assert {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()} == good_files
+
+
+def test_strict_abort_on_a_fresh_out_does_not_block_the_retry(tmp_path):
+    """The old bug's second half: `out.mkdir(...)` plus a bare
+    validation_report.json (neither `sessions.parquet` nor
+    `datapackage.json`) left a directory `_refuse_foreign_directory` then
+    refused to build into on the very next attempt.
+    """
+    from focuswatch_dataset import schema as S
+
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(S, "ACCEL_USER_BAND", (0.9, 1.1))
+        with pytest.raises(RuntimeError, match="validation failed"):
+            build_dataset(src, out, strict=True)
+
+    assert not out.exists()
+    # A corrected retry must not be refused as a "foreign" directory.
+    build_dataset(src, out, strict=True)
+    assert (out / "sessions.parquet").exists()
+
+
+def test_strict_abort_report_lands_in_a_sibling_directory_named_in_the_error(tmp_path):
+    from focuswatch_dataset import schema as S
+
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(S, "ACCEL_USER_BAND", (0.9, 1.1))
+        with pytest.raises(RuntimeError, match="validation failed") as excinfo:
+            build_dataset(src, out, strict=True)
+
+    message = str(excinfo.value)
+    failed_dirs = [p for p in tmp_path.iterdir()
+                  if p.is_dir() and p.name.startswith(f".{out.name}.failed-")]
+    assert len(failed_dirs) == 1, failed_dirs
+    report_path = failed_dirs[0] / "validation_report.json"
+    assert report_path.exists()
+    assert str(report_path) in message
+
+
 def test_redaction_policy_is_recorded_in_the_manifest(tmp_path):
     out = tmp_path / "out"
     build_dataset(sources(tmp_path), out, policy=RedactionPolicy.FREE_WRITING_XY)
@@ -146,7 +213,12 @@ def test_coverage_gap_abort_persists_the_full_gap_list_in_the_report(tmp_path, m
     with pytest.raises(RuntimeError, match="coverage gap"):
         build_dataset(sources(tmp_path), out, strict=True)
 
-    findings = json.loads((out / "validation_report.json").read_text())
+    # Why (I2): the abort report no longer lands in `out` itself - see
+    # test_strict_abort_report_lands_in_a_sibling_directory_named_in_the_error.
+    failed_dirs = [p for p in tmp_path.iterdir()
+                  if p.is_dir() and p.name.startswith(f".{out.name}.failed-")]
+    assert len(failed_dirs) == 1, failed_dirs
+    findings = json.loads((failed_dirs[0] / "validation_report.json").read_text())
     gap_findings = [f for f in findings if f["check"] == "coverage_gap"]
     assert gap_findings, "the report must not read as if every check passed"
     assert all(not f["passed"] for f in gap_findings)

@@ -279,8 +279,18 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     # file, so a mismatch there would silently under-report a real problem).
     final_report = _report_with_gaps(report, gaps)
     if strict and (report.failed or gaps):
-        out.mkdir(parents=True, exist_ok=True)
-        report_path = out / "validation_report.json"
+        # Why (I2): this used to write straight into `out`, before staging
+        # ever engages - into a pre-existing good build that overwrote its
+        # report with failures describing different data; into a fresh
+        # --out it left a bare validation_report.json that
+        # _refuse_foreign_directory then refused on the next attempt (it
+        # carries neither _PRIOR_BUILD_SIGNATURE file). A sibling directory,
+        # the same naming pattern staging/backup dirs already use, means
+        # `out` is never touched on this path at all.
+        out.parent.mkdir(parents=True, exist_ok=True)
+        failed_dir = out.parent / f".{out.name}.failed-{uuid.uuid4().hex[:8]}"
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        report_path = failed_dir / "validation_report.json"
         # Why: the gaps go into the persisted file in full, not just the
         # truncated console message below - a stranger reading
         # validation_report.json after a coverage-gap abort must be able to
