@@ -17,9 +17,6 @@ from .base import RecordingBundle, RecordingRef, register
 
 COHORT = "ETH-EGE"
 
-_DOT_TYPES = {"pen_down": "PEN_DOWN", "pen_dot": "PEN_MOVE", "pen_up": "PEN_UP"}
-_NON_STROKE_EVENTS = ("pen_paper_info", "pen_session_sync")
-
 
 def _assert_gyroscope_like(values: np.ndarray) -> None:
     st = norm_stats(values)
@@ -47,12 +44,24 @@ class EgeAdapter:
         head = d / "head_motion_samples_rows.csv"
         if head.exists():
             tables["headimu"] = self._motion(head)
+        pen_markers = None
         pen = d / "pen_events.csv"
         if pen.exists():
-            tables["pen"] = self._pen(pen)
+            stroke_table, pen_markers = self._pen(pen)
+            if stroke_table is not None:
+                tables["pen"] = stroke_table
         events = d / "events.csv"
-        if events.exists():
-            tables["markers"] = self._markers(events)
+        session_markers = self._markers(events) if events.exists() else None
+        # Why (C3/I8): pen_paper_info and pen_session_sync carry no position,
+        # so neither belongs in pen/ - both route to markers/ instead,
+        # matching what the SensorLogger adapter already does with
+        # pen_session_sync (DESIGN §8.1). They come from a different source
+        # file (pen_events.csv, not events.csv) so are merged here rather
+        # than produced by _markers directly.
+        combined = pd.concat([t for t in (session_markers, pen_markers) if t is not None],
+                             ignore_index=True)
+        if len(combined):
+            tables["markers"] = sort_stable_by_time(combined)
 
         meta = {
             # Why: this source states no nominal wrist rate anywhere (no rate
@@ -89,8 +98,12 @@ class EgeAdapter:
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web",
             "study_mode": "study",
-            "pen_xy_unit": "webapp_raw",
-            "pen_pressure_scale": "webapp_force",
+            # Why (C3): Ege is generation A (see schema.py's PEN_EVENTS_GEN_A);
+            # the label follows the export generation, not this pipeline
+            # directory - SensorLogger's own generation-A recordings
+            # (S3/T8/T9/T10) get the identical value.
+            "pen_xy_unit": S.PEN_XY_UNIT_GEN_A,
+            "pen_pressure_scale": S.PEN_PRESSURE_SCALE_GEN_A,
             "session_start_ns": self._session_start_ns(d / "sensor_session.csv"),
         }
         return RecordingBundle(ref, tables, meta)
@@ -134,19 +147,38 @@ class EgeAdapter:
             out["src_t_session_ms"] = raw["t_session_ms"]
         return sort_stable_by_time(out)
 
-    def _pen(self, path: Path) -> pd.DataFrame:
+    def _pen(self, path: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+        """Strokes -> pen/, non-stroke events (pen_paper_info/pen_session_sync) -> markers/.
+
+        Both live in this same CSV (C3/I8) - split here rather than have two
+        methods each re-read the file.
+        """
         raw = pd.read_csv(path)
-        raw = raw[~raw["type"].isin(_NON_STROKE_EVENTS)]
-        out = pd.DataFrame({
-            "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
-            "dot_type": raw["type"].map(_DOT_TYPES).to_numpy(),
-            "x": raw["x"].astype(float).to_numpy(), "y": raw["y"].astype(float).to_numpy(),
-            "pressure": raw["force"].astype(float).to_numpy(),
-            "src_t_session_ms": raw["t_session_ms"].to_numpy(),
-        })
-        if out["dot_type"].isna().any():
-            raise ValueError(f"unmapped pen event types in {path}")
-        return sort_stable_by_time(out)
+        strokes = raw[~raw["type"].isin(S.PEN_NON_STROKE_EVENTS)]
+        pen = None
+        if len(strokes):
+            pen = pd.DataFrame({
+                "t_ns": to_unix_ns(strokes["t_ms"].to_numpy(), "ms"),
+                "dot_type": strokes["type"].map(S.PEN_EVENTS_GEN_A).to_numpy(),
+                "x": strokes["x"].astype(float).to_numpy(), "y": strokes["y"].astype(float).to_numpy(),
+                "pressure": strokes["force"].astype(float).to_numpy(),
+                "src_t_session_ms": strokes["t_session_ms"].to_numpy(),
+            })
+            if pen["dot_type"].isna().any():
+                raise ValueError(f"unmapped pen event types in {path}")
+            pen = sort_stable_by_time(pen)
+
+        non_stroke = raw[raw["type"].isin(S.PEN_NON_STROKE_EVENTS)]
+        markers = None
+        if len(non_stroke):
+            markers = sort_stable_by_time(pd.DataFrame({
+                "t_ns": to_unix_ns(non_stroke["t_ms"].to_numpy(), "ms"),
+                "event": non_stroke["type"].astype(str),
+                "task_id": "", "task_name": "", "task_index": np.nan,
+                "task_category": "", "protocol_id": "eth_web",
+                "src_t_session_ms": non_stroke["t_session_ms"].to_numpy(),
+            }))
+        return pen, markers
 
     def _markers(self, path: Path) -> pd.DataFrame:
         raw = pd.read_csv(path)

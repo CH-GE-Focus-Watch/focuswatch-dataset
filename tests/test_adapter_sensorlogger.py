@@ -16,7 +16,7 @@ T0_NS = 1780853585220_000_000
 
 
 def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pen=True,
-                  with_rawaccel=True):
+                  with_rawaccel=True, generation="B"):
     d = root / sid
     d.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(2)
@@ -75,13 +75,26 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
                "session_id": "x",
                "payload": {"pen_connected_t_ms": 1.0, "session_start_t_ms": 2.0,
                            "pen_minus_session_ms": 1.0}}]
-    if with_pen:
+    # Why (C3): generation B (E1/E2/E3) embeds strokes in `events` with a
+    # nested payload; generation A (Ege's own export, plus SL's S3/T8/T9/T10)
+    # stores them under a separate, flat `pen_events` key instead - `events`
+    # never carries stroke data for a genA session.
+    pen_events = []
+    if with_pen and generation == "B":
         for i, ev in enumerate(["pen_down", "pen_move", "pen_move", "pen_up"]):
             events.append({"t_ms": int(t[20 + i] // 1_000_000), "t_session_ms": 200.0 + i,
                            "event": ev, "session_id": "x",
                            "payload": {"x": 11.68 + i, "y": 56.19, "force": 408,
                                        "tilt": {"x": 93, "y": 139, "twist": 9},
                                        "timestamp": 1716121921598}})
+    elif with_pen and generation == "A":
+        for i, ev in enumerate(["pen_down", "pen_dot", "pen_dot", "pen_up"]):
+            pen_events.append({"t_ms": int(t[20 + i] // 1_000_000), "t_session_ms": 200.0 + i,
+                               "type": ev, "x": 11.68 + i, "y": 56.19, "force": 408})
+        # A generation-A event class carrying no position (C3/I8) - must
+        # route to markers/, never to pen/.
+        pen_events.append({"t_ms": int(t[24] // 1_000_000), "t_session_ms": 204.0,
+                           "type": "pen_paper_info"})
     # Why: without a trailing session_end, markers' span truncates to its last
     # early event (~100 ms in) while pen strokes and the motion streams run to
     # the recording's actual end - validate_recording's streams_overlap then
@@ -90,7 +103,10 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
     # brackets the session with session_start/session_end.
     events.append({"t_ms": int(t[-1] // 1_000_000), "t_session_ms": float((n - 1) * 10),
                    "event": "session_end", "session_id": "x", "payload": {}})
-    (d / f"{sid}.json").write_text(json.dumps({"events": events}))
+    body = {"events": events}
+    if generation == "A":
+        body["pen_events"] = pen_events
+    (d / f"{sid}.json").write_text(json.dumps(body))
     return root
 
 
@@ -242,6 +258,70 @@ def test_missing_raw_accel_is_reported_not_faked(tmp_path):
     bundle = a.load(ref)
     assert "watch_rawaccel" not in bundle.tables
     assert bundle.meta["has_watch_rawaccel"] is False
+
+
+def test_generation_a_pen_events_key_is_read_not_dropped(tmp_path):
+    """C3: S3/T8/T9/T10 store strokes under `pen_events`, a key the adapter
+    used to ignore entirely (it only ever read `events`) - all four
+    recordings published has_pen=false while carrying real stroke ground
+    truth. write_fixture's generation="A" pen_events entries are 3 strokes
+    (pen_down/pen_dot/pen_dot/pen_up = 4, but the 2 pen_dot rows both map to
+    PEN_MOVE) plus one pen_paper_info.
+    """
+    write_fixture(tmp_path, sid="focuswatch_T8_s1", generation="A")
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if "T8" in r.recording_id)
+    bundle = a.load(ref)
+    assert bundle.meta["has_pen"] is True
+    pen = bundle.tables["pen"]
+    assert len(pen) == 4
+    assert set(pen["dot_type"]) == {"PEN_DOWN", "PEN_MOVE", "PEN_UP"}
+    assert (pen["dot_type"] == "PEN_MOVE").sum() == 2
+
+
+def test_generation_a_pen_events_carry_no_tilt_or_pen_device_clock(tmp_path):
+    """C3: generation A carries no tilt and no pen-device clock (open
+    question 4) - NaN here is the honest value, not a missing mapping."""
+    write_fixture(tmp_path, sid="focuswatch_T9_s1", generation="A")
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if "T9" in r.recording_id)
+    pen = a.load(ref).tables["pen"]
+    assert pen["tilt_x"].isna().all()
+    assert pen["tilt_y"].isna().all()
+    assert pen["src_timestamp"].isna().all()
+
+
+def test_generation_a_paper_info_routes_to_markers_not_dropped(tmp_path):
+    write_fixture(tmp_path, sid="focuswatch_T10_s1", generation="A")
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if "T10" in r.recording_id)
+    bundle = a.load(ref)
+    assert "pen_paper_info" in set(bundle.tables["markers"]["event"])
+    assert "pen_paper_info" not in set(bundle.tables["pen"]["dot_type"])
+
+
+def test_generation_a_pen_xy_unit_matches_ege_not_the_e_series(tmp_path):
+    """C3: pen_xy_unit/pen_pressure_scale follow the export GENERATION, not
+    the SensorLogger pipeline directory - genA recordings must publish the
+    same label Ege's own genA export does, distinct from genB (E1/E2/E3)."""
+    write_fixture(tmp_path, sid="focuswatch_S3_s1", generation="A")
+    write_fixture(tmp_path, sid="E2_session6", generation="B")
+    a = SensorLoggerAdapter()
+    gen_a = a.load(next(r for r in a.discover(tmp_path) if "S3" in r.recording_id))
+    gen_b = a.load(next(r for r in a.discover(tmp_path) if "E2" in r.recording_id))
+    assert gen_a.meta["pen_xy_unit"] == S.PEN_XY_UNIT_GEN_A == "webapp_raw"
+    assert gen_a.meta["pen_pressure_scale"] == S.PEN_PRESSURE_SCALE_GEN_A == "webapp_force"
+    assert gen_b.meta["pen_xy_unit"] == S.PEN_XY_UNIT_GEN_B
+    assert gen_b.meta["pen_pressure_scale"] == S.PEN_PRESSURE_SCALE_GEN_B
+    assert gen_a.meta["pen_xy_unit"] != gen_b.meta["pen_xy_unit"]
+
+
+def test_generation_a_loaded_pen_passes_the_validator(tmp_path):
+    write_fixture(tmp_path, sid="focuswatch_T8_s1", generation="A")
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if "T8" in r.recording_id)
+    pen = a.load(ref).tables["pen"]
+    assert [f for f in validate_pen_table(pen, ref.recording_id) if not f.passed] == []
 
 
 def test_pen_comes_from_the_session_json(tmp_path):

@@ -23,8 +23,6 @@ from .base import RecordingBundle, RecordingRef, register
 
 COHORT = "ETH-SL"
 
-_DOT_TYPES = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
-
 _WRIST_SENSOR_NAME = "Wrist Motion"
 
 
@@ -113,7 +111,7 @@ class SensorLoggerAdapter:
             tables["watch_rawaccel"] = rawaccel_df
             column_factors.update({("watch_rawaccel", c): f for c, f in rawaccel_factors.items()})
 
-        pen, markers = self._from_session_json(d)
+        pen, markers, generation = self._from_session_json(d)
         if pen is not None:
             tables["pen"] = pen
         if markers is not None:
@@ -145,7 +143,13 @@ class SensorLoggerAdapter:
             },
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web", "study_mode": "study",
-            "pen_xy_unit": "webapp_raw", "pen_pressure_scale": "webapp_force",
+            # Why (C3): follows the EXPORT GENERATION, not this pipeline
+            # directory - genA (S3/T8/T9/T10) gets the same value as Ege's
+            # own genA export; genB (E1/E2/E3) is kept distinct (see
+            # schema.py's PEN_XY_UNIT_GEN_* docstring for why).
+            "pen_xy_unit": S.PEN_XY_UNIT_GEN_A if generation == "A" else S.PEN_XY_UNIT_GEN_B,
+            "pen_pressure_scale": (
+                S.PEN_PRESSURE_SCALE_GEN_A if generation == "A" else S.PEN_PRESSURE_SCALE_GEN_B),
             "src_standardisation": si,
             "unit_conversion_factor_by_column": column_factors,
             "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
@@ -186,13 +190,55 @@ class SensorLoggerAdapter:
         factors = {c: factor for c in S.COLUMNS[S.Quantity.ACCEL_TOTAL]}
         return sort_stable_by_time(out), factors
 
-    def _from_session_json(self, d: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    @staticmethod
+    def _read_session_json(d: Path) -> dict:
         candidates = list(d.glob("*.json"))
         if len(candidates) != 1:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
-        events = json.loads(candidates[0].read_text())["events"]
+        return json.loads(candidates[0].read_text())
 
-        strokes = [e for e in events if e["event"] in _DOT_TYPES]
+    def _from_session_json(self, d: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str]:
+        payload = self._read_session_json(d)
+        events = payload["events"]
+
+        # Why (C3): generation A (S3/T8/T9/T10) stores strokes under a
+        # separate, flat `pen_events` key (type/x/y/force, no payload
+        # wrapper, no tilt, no pen-device clock) instead of inside `events`
+        # (generation B: E1/E2/E3). Detected structurally by key presence,
+        # not from the recording id - the two generations never mix within
+        # one recording. Normalised here to the same event/payload shape
+        # `events` already uses, so genA strokes need no second code path
+        # below; `events` itself never carries stroke data for a genA
+        # session, only session/phase markers and pen_session_sync.
+        if "pen_events" in payload:
+            generation = "A"
+            dot_types = S.PEN_EVENTS_GEN_A
+            normalised_pen_events = []
+            for e in payload["pen_events"]:
+                # Why: fail loudly and specifically rather than a bare
+                # KeyError - the flat generation-A pen_events shape
+                # (t_ms/type/x/y/force, no payload wrapper) is inferred from
+                # whole-branch-review-findings.md's C3, not verified against a
+                # real S3/T8/T9/T10 export in this environment.
+                missing = [k for k in ("t_ms", "type") if k not in e]
+                if missing:
+                    raise ValueError(
+                        f"{d}: pen_events entry missing required key(s) {missing} - "
+                        f"expected a flat {{'t_ms', 'type', 'x', 'y', 'force', ...}} "
+                        f"record, got keys {sorted(e)}"
+                    )
+                normalised_pen_events.append({
+                    "t_ms": e["t_ms"], "t_session_ms": e.get("t_session_ms", np.nan),
+                    "event": e["type"],
+                    "payload": {k: v for k, v in e.items() if k not in ("t_ms", "t_session_ms", "type")},
+                })
+            all_events = events + normalised_pen_events
+        else:
+            generation = "B"
+            dot_types = S.PEN_EVENTS_GEN_B
+            all_events = events
+
+        strokes = [e for e in all_events if e["event"] in dot_types]
         pen = None
         if strokes:
             pen = sort_stable_by_time(pd.DataFrame({
@@ -200,17 +246,19 @@ class SensorLoggerAdapter:
                 # magnitude, which would shift every timestamp and can collapse
                 # neighbouring samples onto the same value.
                 "t_ns": to_unix_ns(np.array([e["t_ms"] for e in strokes], dtype=np.int64), "ms"),
-                "dot_type": [_DOT_TYPES[e["event"]] for e in strokes],
+                "dot_type": [dot_types[e["event"]] for e in strokes],
                 "x": [e["payload"].get("x", np.nan) for e in strokes],
                 "y": [e["payload"].get("y", np.nan) for e in strokes],
                 "pressure": [e["payload"].get("force", np.nan) for e in strokes],
+                # Why (C3): generation A carries no tilt and no pen-device
+                # clock (open question 4) - NaN here is honest, not a bug.
                 "tilt_x": [e["payload"].get("tilt", {}).get("x", np.nan) for e in strokes],
                 "tilt_y": [e["payload"].get("tilt", {}).get("y", np.nan) for e in strokes],
                 # Why: the pen's own clock, roughly 749 days behind wall clock. Metadata only.
                 "src_timestamp": [e["payload"].get("timestamp", np.nan) for e in strokes],
             }))
 
-        others = [e for e in events if e["event"] not in _DOT_TYPES]
+        others = [e for e in all_events if e["event"] not in dot_types]
         markers = None
         if others:
             markers = sort_stable_by_time(pd.DataFrame({
@@ -222,7 +270,7 @@ class SensorLoggerAdapter:
                 "src_payload": [json.dumps(e.get("payload", {})) for e in others],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
             }))
-        return pen, markers
+        return pen, markers, generation
 
 
 register(SensorLoggerAdapter())

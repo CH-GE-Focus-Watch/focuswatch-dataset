@@ -73,6 +73,34 @@ ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
 
+# Pen event vocabulary shared by both ETH pipelines (DESIGN §8.1). Both come
+# from the same web app but store its two export generations differently:
+# generation A (Ege's own CSV export; SensorLogger's S3/T8/T9/T10, which
+# carry it under a separate `pen_events` JSON key) samples the pen at
+# "pen_dot"; generation B (SensorLogger's E1/E2/E3, embedded in `events`)
+# samples it at "pen_move" instead. One table per generation, imported by
+# both adapters (C3), so they cannot independently drift on the mapping.
+PEN_EVENTS_GEN_A: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_dot": "PEN_MOVE", "pen_up": "PEN_UP"}
+PEN_EVENTS_GEN_B: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
+# Non-stroke pen event classes, present in both generations: neither carries
+# a position, so neither belongs in pen/ - both are routed to markers/
+# instead (DESIGN §8.1's pen_session_sync treatment, extended to
+# pen_paper_info in this fix - see C3/I8 in whole-branch-review-findings.md).
+PEN_NON_STROKE_EVENTS = ("pen_paper_info", "pen_session_sync")
+
+# Pen coordinate/pressure scale labels, keyed by EXPORT GENERATION - not by
+# which pipeline directory a recording happens to live in (C3). Generation A
+# gets one label regardless of which pipeline produced it (Ege's own export
+# and SensorLogger's S3/T8/T9/T10 are the same generation); generation B
+# (SensorLogger's E1/E2/E3) is kept distinct because whole-branch-review-
+# findings.md's open question 6 leaves whether the two generations share one
+# underlying coordinate system unconfirmed - conflating them would publish an
+# unverified equivalence as fact.
+PEN_XY_UNIT_GEN_A = "webapp_raw"
+PEN_PRESSURE_SCALE_GEN_A = "webapp_force"
+PEN_XY_UNIT_GEN_B = "sl_webapp_raw"
+PEN_PRESSURE_SCALE_GEN_B = "sl_webapp_force"
+
 # Which modality's Finding stream a manifest capability flag gates. The single
 # source both validate.check_coverage (which physical checks a flag requires)
 # and manifest.build_manifest (which flags are recomputed from table/column

@@ -137,11 +137,23 @@ def test_time_columns_are_split_correctly(tmp_path):
 def test_pen_vocabulary_maps_to_canonical(tmp_path):
     write_fixture(tmp_path)
     a = EgeAdapter()
-    pen = a.load(a.discover(tmp_path)[0]).tables["pen"]
+    bundle = a.load(a.discover(tmp_path)[0])
+    pen = bundle.tables["pen"]
     assert set(pen["dot_type"]) <= set(S.DOT_TYPES)
     assert (pen["dot_type"] == "PEN_MOVE").sum() == 3
     framing = pen[pen["dot_type"] == "PEN_HOVER"]
-    assert framing.empty  # pen_paper_info carries no position and is dropped from pen/
+    assert framing.empty  # pen_paper_info carries no position, never becomes a pen/ row
+
+
+def test_pen_paper_info_routes_to_markers_not_dropped(tmp_path):
+    """C3/I8: pen_paper_info used to be silently discarded (I8) - it carries
+    no position, so it still never becomes a pen/ row, but it must not
+    vanish entirely. Routed to markers/, matching how this adapter (and
+    SensorLogger) already treat pen_session_sync."""
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    markers = a.load(a.discover(tmp_path)[0]).tables["markers"]
+    assert "pen_paper_info" in set(markers["event"])
 
 
 def test_loaded_watch_passes_the_validator(tmp_path):
