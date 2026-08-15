@@ -24,7 +24,10 @@ def test_roundtrip_is_bit_identical(tmp_path):
     p = tmp_path / "r.parquet"
     write_table(df, p, "R1")
     back = read_table(p)
-    pd.testing.assert_frame_equal(df, back)
+    # check_exact keeps the guarantee in the assertion rather than in pandas'
+    # habit of comparing dtypes before values - a downcast must fail on the
+    # numbers, not only on the dtype that happened to be checked first.
+    pd.testing.assert_frame_equal(df, back, check_exact=True)
     assert (df["accel_user_x"].to_numpy() == back["accel_user_x"].to_numpy()).all()
 
 
