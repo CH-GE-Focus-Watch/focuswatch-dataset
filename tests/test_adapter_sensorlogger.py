@@ -58,7 +58,9 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
         "version": 3, "device name": "iPhone 15 Pro", "recording epoch time": T0_NS // 1_000_000,
         "recording time": "2026-06-07_17-33-05", "recording timezone": "Europe/Zurich",
         "platform": "ios", "appVersion": "1.59", "device id": "abc",
-        "sensors": "Wrist Motion|Headphone|Annotation", "sampleRateMs": "10|10|",
+        # Wrist Motion sits at position 1 with a rate no other stream shares, so a
+        # parser that took a fixed index instead of the named one reads the wrong value.
+        "sensors": "Headphone|Wrist Motion|Annotation", "sampleRateMs": "40|10|",
         "standardisation": str(standardisation).lower(), "platform version": "26.5",
     }]).to_csv(d / "Metadata.csv", index=False)
 
@@ -189,7 +191,7 @@ def test_watch_hz_nominal_is_parsed_from_metadata_sample_rate(tmp_path):
     write_fixture(tmp_path)
     d = tmp_path / "E2_session6"
     meta = pd.read_csv(d / "Metadata.csv")
-    meta["sampleRateMs"] = "20|10|"          # Wrist Motion at 20 ms -> 50 Hz
+    meta["sampleRateMs"] = "40|20|"          # Wrist Motion at 20 ms -> 50 Hz
     meta.to_csv(d / "Metadata.csv", index=False)
 
     a = SensorLoggerAdapter()
