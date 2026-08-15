@@ -6,11 +6,21 @@ and the plan's property 4).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
 
 from . import schema as S
+
+# I4: a Frictionless resource `name` is lowercase alphanumeric plus `.`, `-`,
+# `_` only - no `/`, no upper case. `path` (the actual file location) is left
+# untouched; only the descriptor's own `name` field needs slugifying.
+_SLUG_INVALID = re.compile(r"[^a-z0-9._-]+")
+
+
+def _slugify(name: str) -> str:
+    return _SLUG_INVALID.sub("-", name.lower())
 
 
 # I12: `write_datapackage` below asserts CC-BY-4.0 in `datapackage.json`'s
@@ -43,11 +53,22 @@ def write_license(out: Path) -> None:
 
 
 def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
-    resources = [{"name": "sessions", "path": "sessions.csv", "format": "csv"}]
+    # I4: without these four, a Frictionless consumer only ever sees the
+    # per-recording modality tables and sessions.csv - never channels.parquet
+    # (the one place a column's unit/semantics is declared), never the
+    # validation evidence, never the dictionary that explains the unit
+    # vocabulary.
+    resources = [
+        {"name": "sessions", "path": "sessions.csv", "format": "csv"},
+        {"name": "sessions-parquet", "path": "sessions.parquet", "format": "parquet"},
+        {"name": "channels", "path": "channels.parquet", "format": "parquet"},
+        {"name": "data-dictionary", "path": "data_dictionary.md", "format": "markdown"},
+        {"name": "validation-report", "path": "validation_report.json", "format": "json"},
+    ]
     for modality in S.MODALITIES:
         d = out / modality
         for f in sorted(d.glob("*.parquet")) if d.exists() else []:
-            resources.append({"name": f"{modality}/{f.stem}",
+            resources.append({"name": _slugify(f"{modality}-{f.stem}"),
                               "path": f"{modality}/{f.name}", "format": "parquet"})
     (out / "datapackage.json").write_text(json.dumps({
         "profile": "data-package", "name": "focuswatch-dataset",
@@ -55,6 +76,82 @@ def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame)
         "licenses": [{"name": "CC-BY-4.0", "path": "https://creativecommons.org/licenses/by/4.0/"}],
         "version": S.SCHEMA_VERSION, "resources": resources,
     }, indent=2))
+
+
+def _modality_file_counts(out: Path) -> dict[str, int]:
+    counts = {}
+    for modality in S.MODALITIES:
+        d = out / modality
+        counts[modality] = len(list(d.glob("*.parquet"))) if d.exists() else 0
+    return counts
+
+
+def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
+    """Bundle entry point + recipe chapters (DESIGN §4).
+
+    Every count below is read from `manifest`/`channels`/`out` itself - not
+    restated, so it cannot drift from the archive it describes (I4).
+    """
+    counts = _modality_file_counts(out)
+    n_recordings = len(manifest)
+    n_participants = int(manifest["participant_id"].nunique())
+    cohort_counts = manifest.groupby("cohort").size().sort_index()
+
+    lines = [
+        "# FocusWatch dataset", "",
+        "Wrist and head IMU, pen and observer-annotation ground truth for a",
+        f"handwriting-detection study. {n_recordings} recordings, "
+        f"{n_participants} participants, schema version {S.SCHEMA_VERSION}.", "",
+        "## Contents", "",
+        "| file | rows | what it is |",
+        "|---|---|---|",
+        f"| `sessions.parquet` / `sessions.csv` | {n_recordings} | the manifest - one row per "
+        "recording: every capability flag (`has_watch`, `has_pen`, ...), timing and protocol field |",
+        f"| `channels.parquet` | {len(channels)} | one row per (recording, modality, column): unit, "
+        "semantics, sample rate, time domain |",
+        "| `data_dictionary.md` | - | the canonical unit vocabulary, and what is/isn't harmonised "
+        "across sources |",
+        "| `validation_report.json` | - | every physical/structural check this build ran, and "
+        "whether it passed |",
+        "| `datapackage.json` | - | machine-readable Frictionless Data Package descriptor |",
+        "| `LICENSE` | - | the data license (CC BY 4.0) |",
+    ]
+    for modality in S.MODALITIES:
+        if counts[modality]:
+            lines.append(f"| `{modality}/{{recording_id}}.parquet` | {counts[modality]} files | "
+                        f"see `channels.parquet` (`modality == \"{modality}\"`) for its columns |")
+    lines += [
+        "", "## Quick start", "",
+        "```python",
+        "from focuswatch_dataset import load_manifest, load_recording, by_flags", "",
+        'root = "."  # the directory this README is in',
+        "m = load_manifest(root)", "",
+        "# every recording with a 100 Hz watch stream carrying gravity",
+        "subset = by_flags(m, has_watch=True, has_gravity=True)", "",
+        'rid = subset.iloc[0]["recording_id"]',
+        'df = load_recording(root, rid, modality="watch")',
+        "```", "",
+        "## Recipes", "",
+        "- **Select recordings by capability**: `m.query(...)` (any pandas expression over "
+        "`sessions.parquet`'s columns), or `by_flags(m, has_pen=True, ...)` for the equality-only "
+        "shorthand.",
+        '- **Load one recording\'s table**: `load_recording(root, recording_id, modality="watch")`.',
+        "- **Load several at once**: `load_recordings(root, recording_ids, modality=\"watch\")` - "
+        "refuses to silently mix `user` and `total` acceleration semantics.",
+        "- **Total acceleration but you need gravity removed**: `to_user_acceleration(df)` derives "
+        "it from the quaternion; the bundle itself never guesses an orientation.",
+        "- **What did this build verify?**: read `validation_report.json` - every physical check, "
+        "per recording, with the observed value and the tolerance it was checked against.",
+        "", "## License", "",
+        "The data in this bundle is CC BY 4.0 - see `LICENSE`. The `focuswatch-dataset` software "
+        "that produced it is Apache-2.0, in its own source repository.",
+        "", "## Corpus by cohort", "",
+        "| cohort | recordings |",
+        "|---|---|",
+    ]
+    for cohort, n in cohort_counts.items():
+        lines.append(f"| {cohort} | {n} |")
+    (out / "README.md").write_text("\n".join(lines) + "\n")
 
 
 def write_data_dictionary(out: Path, channels: pd.DataFrame) -> None:

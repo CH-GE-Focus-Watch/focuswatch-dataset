@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -33,7 +34,8 @@ def test_build_produces_all_expected_artefacts(tmp_path):
     out = tmp_path / "out"
     build_dataset(sources(tmp_path), out)
     for f in ("sessions.parquet", "sessions.csv", "channels.parquet",
-              "datapackage.json", "data_dictionary.md", "validation_report.json"):
+              "datapackage.json", "data_dictionary.md", "validation_report.json",
+              "README.md", "LICENSE"):
         assert (out / f).exists(), f
 
 
@@ -658,3 +660,58 @@ def test_annotation_tables_publish_one_schema_across_cohorts(tmp_path):
         )
         checked += 1
     assert checked == len(annotation), f"only {checked} annotation modalities were built"
+
+
+# --- I4: bundle README + a valid datapackage.json --------------------------
+
+_FRICTIONLESS_NAME = re.compile(r"^[a-z0-9._-]+$")
+
+
+def test_datapackage_resource_names_are_valid_frictionless_slugs(tmp_path):
+    """Resource names were `f"{modality}/{f.stem}"` -> e.g. "watch/ETH-EGE-T6",
+    invalid twice over: the "/" and the upper case. The Frictionless spec
+    allows lowercase alphanumeric plus `.`, `-`, `_` only.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    package = json.loads((out / "datapackage.json").read_text())
+    names = [r["name"] for r in package["resources"]]
+    assert names, "datapackage.json must list at least one resource"
+    for name in names:
+        assert _FRICTIONLESS_NAME.match(name), name
+    assert len(names) == len(set(names)), "resource names must be unique"
+
+
+def test_datapackage_lists_the_four_previously_missing_resources(tmp_path):
+    """Before this fix, `datapackage.json` listed only sessions.csv and the
+    per-recording parquet files - a Frictionless consumer never saw
+    channels.parquet, the one place a column's unit/semantics is declared.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    package = json.loads((out / "datapackage.json").read_text())
+    paths = {r["path"] for r in package["resources"]}
+    for expected in ("sessions.parquet", "channels.parquet",
+                     "validation_report.json", "data_dictionary.md"):
+        assert expected in paths, expected
+
+
+def test_readme_is_generated_from_the_actual_build(tmp_path):
+    """The README must be DERIVED from what this build actually produced, not
+    a hand-maintained file list - assert every number in it is read straight
+    back out of the manifest/disk it describes.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    text = (out / "README.md").read_text()
+
+    assert f"{len(manifest)} recordings" in text
+    for cohort, n in manifest.groupby("cohort").size().items():
+        assert f"| {cohort} | {n} |" in text
+    for modality in ("watch", "pen", "markers"):
+        n_files = len(list((out / modality).glob("*.parquet")))
+        assert f"{n_files} files" in text
+    # The recipe chapter must use the real, importable public API (I3), not
+    # a stale snippet a reuser would copy-paste into an ImportError.
+    assert "from focuswatch_dataset import load_manifest, load_recording, by_flags" in text
