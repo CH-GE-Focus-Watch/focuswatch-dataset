@@ -564,6 +564,37 @@ def test_git_sha_falls_back_to_the_installed_version_not_an_empty_string(monkeyp
     assert build._git_sha() != ""
 
 
+def test_git_sha_records_a_dirty_working_tree(monkeypatch):
+    """Fix round C item 5: test_git_sha_resolves_against_package_location_not_cwd
+    strips the `-dirty` suffix unconditionally (`sha.removesuffix("-dirty")`),
+    so it cannot tell a clean SHA from a dirty one - a mutation dropping the
+    suffix left 293/293 green. Force `git status --porcelain` to report a
+    modification and require the suffix to survive; a bundle built from a
+    modified tree must not publish a bare, falsely-clean SHA.
+    """
+    from focuswatch_dataset import build
+
+    monkeypatch.setattr(build.subprocess, "check_output", lambda *a, **k: "abc123\n")
+    monkeypatch.setattr(
+        build.subprocess, "run",
+        lambda *a, **k: build.subprocess.CompletedProcess(a, 0, stdout=" M some_file.py\n", stderr=""))
+    assert build._git_sha() == "abc123-dirty"
+
+
+def test_git_sha_omits_the_dirty_suffix_on_a_clean_tree(monkeypatch):
+    """The companion case: an empty `git status --porcelain` must NOT get the
+    suffix. Without this, a mutation that always appended `-dirty` would
+    survive undetected alongside the test above.
+    """
+    from focuswatch_dataset import build
+
+    monkeypatch.setattr(build.subprocess, "check_output", lambda *a, **k: "abc123\n")
+    monkeypatch.setattr(
+        build.subprocess, "run",
+        lambda *a, **k: build.subprocess.CompletedProcess(a, 0, stdout="", stderr=""))
+    assert build._git_sha() == "abc123"
+
+
 # --- CLI: fw report (fix round 1, item 4) ----------------------------------
 
 def test_cli_report(tmp_path, capsys):
