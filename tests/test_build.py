@@ -122,13 +122,17 @@ def test_build_is_order_independent_of_source_dict_key_order(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     build_dataset(src, a)
     build_dataset(reversed_src, b)
-    files_a = sorted(p.relative_to(a) for p in a.rglob("*"))
-    files_b = sorted(p.relative_to(b) for p in b.rglob("*"))
+    files_a = sorted(p.relative_to(a) for p in a.rglob("*") if p.is_file())
+    files_b = sorted(p.relative_to(b) for p in b.rglob("*") if p.is_file())
     assert [f.as_posix() for f in files_a] == [f.as_posix() for f in files_b]
+    # Why: every file, not only *.parquet - validation_report.json's finding
+    # order follows bundle-processing order, so it is the one artefact an
+    # ordering regression could corrupt that a parquet-only hash comparison
+    # would miss entirely (write_table's own byte-reproducibility guarantee
+    # covers the parquet files regardless of this test).
     for f in files_a:
-        if f.suffix == ".parquet":
-            assert hashlib.sha256((a / f).read_bytes()).hexdigest() == \
-                   hashlib.sha256((b / f).read_bytes()).hexdigest(), f
+        assert hashlib.sha256((a / f).read_bytes()).hexdigest() == \
+               hashlib.sha256((b / f).read_bytes()).hexdigest(), f
 
 
 # --- Fail loudly: a single failed recording must abort, never half-write --
