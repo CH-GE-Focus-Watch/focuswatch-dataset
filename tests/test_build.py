@@ -598,6 +598,35 @@ def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):
     assert "build failed" in printed
 
 
+# --- M11: `fw validate` / `fw report` on a missing or corrupt bundle ------
+
+def test_cli_validate_on_a_missing_bundle_prints_a_message_not_a_traceback(tmp_path, capsys):
+    rc = main(["validate", "--dataset", str(tmp_path / "does-not-exist")])
+    assert rc == 1
+    assert "validate failed" in capsys.readouterr().out
+
+
+def test_cli_report_on_a_missing_bundle_prints_a_message_not_a_traceback(tmp_path, capsys):
+    rc = main(["report", "--dataset", str(tmp_path / "does-not-exist")])
+    assert rc == 1
+    assert "report failed" in capsys.readouterr().out
+
+
+def test_cli_validate_on_a_corrupt_report_prints_a_message_not_a_traceback(tmp_path, capsys):
+    src = sources(tmp_path)
+    out = tmp_path / "out"
+    args = ["build", "--out", str(out)]
+    for name, path in src.items():
+        args += ["--source", f"{name}={path}"]
+    assert main(args) == 0
+    capsys.readouterr()  # discard the build command's own output
+
+    (out / "validation_report.json").write_text("{not valid json")
+    rc = main(["validate", "--dataset", str(out)])
+    assert rc == 1
+    assert "validate failed" in capsys.readouterr().out
+
+
 def test_annotation_tables_publish_one_schema_across_cohorts(tmp_path):
     """I15: markers arrived with two shapes - ML4SCS had seven columns, ETH nine
     (`src_payload`, `src_t_session_ms`), and `task_index` was float64 with NaN in

@@ -48,16 +48,30 @@ def main(argv: list[str] | None = None) -> int:
 
     dataset = Path(args.dataset)
     if args.command == "validate":
-        problems = check_manifest_consistency(load_manifest(dataset), dataset)
-        failed = [f for f in json.loads((dataset / "validation_report.json").read_text())
-                  if not f["passed"]]
+        try:
+            manifest = load_manifest(dataset)
+            problems = check_manifest_consistency(manifest, dataset)
+            failed = [f for f in json.loads((dataset / "validation_report.json").read_text())
+                      if not f["passed"]]
+        except Exception as exc:
+            # Why (M11): a missing or corrupt bundle (sessions.parquet or
+            # validation_report.json absent, truncated, or unparseable) must
+            # exit 1 with a message naming what happened, matching the
+            # `build` branch above - not a raw traceback in what is meant to
+            # run in CI.
+            print(f"validate failed: could not read bundle at {dataset}: {exc}")
+            return 1
         for p in problems:
             print(f"manifest: {p}")
         for f in failed:
             print(f"physics: {f['recording_id']} {f['check']} observed={f['observed']}")
         return 1 if (problems or failed) else 0
 
-    manifest = load_manifest(dataset)
+    try:
+        manifest = load_manifest(dataset)
+    except Exception as exc:
+        print(f"report failed: could not read bundle at {dataset}: {exc}")
+        return 1
     print(f"{len(manifest)} recordings, {manifest['participant_id'].nunique()} participants")
     print(manifest.groupby("cohort").size().to_string())
     return 0
