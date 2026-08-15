@@ -207,9 +207,6 @@ _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
     (S.TIME_DOMAIN_PHONE_WALL_CLOCK, "the iPhone bridge's own wall clock (ML4SCS "
                                      "`src_phone_received_at`) - a third device, distinct from "
                                      "both the watch capture clock and the server clock."),
-    (S.TIME_DOMAIN_NOT_A_CLOCK, "not a timestamp at all (e.g. ML4SCS `src_sequence`, a batch "
-                                "counter) - declaring it on a clock, including its own "
-                                "modality's, would be a category error."),
     (S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK, "a free-running uptime clock (seconds since device "
                                            "boot), never reset to a wall-clock epoch - AirPods "
                                            "`src_sensor_timestamp_s`."),
@@ -240,10 +237,17 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
     lines = ["# Data dictionary", "",
              "Units are canonical across the bundle: acceleration and gravity in g,",
              "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
-             "timestamps as int64 Unix nanoseconds. The clock each column is stamped on",
-             "is named per (recording, modality, column) in this table's `time_domain`",
-             "column - not by `sessions.parquet`'s recording-level `time_domain` alone,",
-             "which names only the primary motion stream's clock and can differ from",
+             "timestamps as int64 Unix nanoseconds. `time_domain` is named per",
+             "(recording, modality, column) in this table, and it answers one question",
+             "per kind of column: a TIME-VALUED column declares the clock ITS OWN VALUES",
+             "are expressed in; every other column declares the clock ITS ROW is stamped",
+             "on, which is that modality's default. So `pen.src_timestamp` reads",
+             "`pen_device_clock` because that is what its numbers are, while",
+             "`pen.pressure` carries the modality's own clock because that is when it",
+             "was measured. What a column holds is stated by `quantity` and `unit`, not",
+             "by this field.",
+             "It is not given by `sessions.parquet`'s recording-level `time_domain`",
+             "alone, which names only the primary motion stream's clock and can differ from",
              "other modalities AND from a modality's own `src_`-prefixed provenance",
              "columns, which are frequently on a different clock than the modality's own",
              "canonical `t_ns`/`t_start_ns`/`t_end_ns` axis (e.g. a pen device's own",

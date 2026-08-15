@@ -173,7 +173,13 @@ def test_src_provenance_columns_are_declared_on_the_clock_they_are_actually_on(t
     Moleskine device clock, ~923 days off server_wall_clock; watch.src_
     local_ts_ms/src_server_received_ms are server-stamped, not the watch
     capture clock the rest of watch/ is on; src_phone_received_at is a third
-    device's clock; src_sequence is not a clock at all.
+    device's clock.
+
+    src_sequence deliberately has NO override. The field answers one question
+    per kind of column - a time-valued column names the clock its own values
+    are in, everything else names the clock its row is stamped on - and a batch
+    counter is stamped on the watch clock exactly like the accelerometer sample
+    beside it. What the column holds is `quantity`/`unit`'s job.
     """
     write_fixture(tmp_path)
     a = Ml4scsAdapter()
@@ -183,7 +189,7 @@ def test_src_provenance_columns_are_declared_on_the_clock_they_are_actually_on(t
     assert ch.loc[("watch", "src_local_ts_ms")] == "server_wall_clock"
     assert ch.loc[("watch", "src_server_received_ms")] == "server_wall_clock"
     assert ch.loc[("watch", "src_phone_received_at")] == "phone_wall_clock"
-    assert ch.loc[("watch", "src_sequence")] == "not_a_clock"
+    assert ch.loc[("watch", "src_sequence")] == "watch_capture_clock"
     assert ch.loc[("pen", "src_timestamp")] == "pen_device_clock"
     assert ch.loc[("pen", "src_t_session_ms")] == "session_relative_offset_ms"
     assert ch.loc[("markers", "src_t_session_ms")] == "session_relative_offset_ms"

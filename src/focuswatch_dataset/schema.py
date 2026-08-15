@@ -167,10 +167,12 @@ TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"
 # `src_t_session_ms` (ML4SCS pen/markers, both ETH pipelines).
 TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS = "session_relative_offset_ms"
 TIME_DOMAIN_PHONE_WALL_CLOCK = "phone_wall_clock"
-# Why: a batch sequence counter (ML4SCS watch.src_sequence) carries no time
-# information at all - declaring it "on" any clock, including its own
-# modality's, would be a category error, not merely an imprecise one.
-TIME_DOMAIN_NOT_A_CLOCK = "not_a_clock"
+# Why there is no "not_a_clock" term: the field answers two questions, one per
+# kind of column. A TIME-VALUED column declares the clock its own values are
+# expressed in; every other column declares the clock its ROW is stamped on,
+# which is the modality default. Under that rule a sequence counter is stamped
+# on the watch clock exactly like the accelerometer sample beside it, and needs
+# no term of its own - what it holds is already stated by `quantity` and `unit`.
 # Why: AirPods' src_sensor_timestamp_s is CMDeviceMotion's free-running
 # uptime clock (seconds since device boot), never reset to wall-clock epoch -
 # distinct from device_wall_clock, which headimu/attention's canonical t_ns

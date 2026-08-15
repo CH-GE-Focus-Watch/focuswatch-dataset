@@ -86,18 +86,17 @@ class Ml4scsAdapter:
             # both server-stamped (see _watch's comment on `ts` vs.
             # `local_ts_ms`), not the watch capture clock the rest of
             # `watch/` is on. src_phone_received_at is the iPhone bridge's
-            # own clock - a third device, not the server. src_sequence is a
-            # batch counter, not a timestamp at all - "not_a_clock" says so
-            # rather than implying it reads on any clock. pen.src_timestamp
+            # own clock - a third device, not the server. pen.src_timestamp
             # is the raw Moleskine device's own clock (see _pen below),
             # ~923 days off server_wall_clock on this corpus (finding 1).
             # src_t_session_ms is a session-relative offset, not a wall
-            # clock reading, on both pen and markers.
+            # clock reading, on both pen and markers. src_sequence needs NO
+            # override: it holds no time, so under the field's rule it
+            # declares the clock its row is stamped on, which is the default.
             "time_domain_by_column": {
                 ("watch", "src_local_ts_ms"): "server_wall_clock",
                 ("watch", "src_server_received_ms"): "server_wall_clock",
                 ("watch", "src_phone_received_at"): S.TIME_DOMAIN_PHONE_WALL_CLOCK,
-                ("watch", "src_sequence"): S.TIME_DOMAIN_NOT_A_CLOCK,
                 ("pen", "src_timestamp"): S.TIME_DOMAIN_PEN_DEVICE_CLOCK,
                 ("pen", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
                 ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
