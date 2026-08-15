@@ -348,7 +348,8 @@ niemand danach.
 ```python
 from focuswatch_dataset import load_manifest, load_recording
 
-m = load_manifest("focuswatch-dataset-v1.0")
+root = "focuswatch-dataset-v1.0"
+m = load_manifest(root)
 
 m.query("has_watch and has_pen and watch_hz_nominal == 100 and has_gravity")
 m.query("has_watch and accel_semantics == 'user'")
@@ -356,8 +357,17 @@ m.query("has_headimu")
 m.query("has_watch_rawaccel")
 m.query("protocol_id == 'ml4scs_v2'")
 
-df = load_recording("ML4SCS-S096", modality="watch")
+df = load_recording(root, "ML4SCS-S096", modality="watch")
 ```
+
+`load_recording` takes `root` explicitly rather than remembering it from a
+prior `load_manifest` call. The alternative - a stateful "dataset" object
+returned by `load_manifest` that closes over its root - was rejected: every
+other function in this API (`load_channels`, `load_recordings`, `by_flags`)
+already takes its root/manifest explicitly, a reuser inspecting two mirrors
+of the bundle side by side needs two roots live at once, and the explicit
+form is what every test in this package's own suite already exercises with a
+`tmp_path` root - no hidden global to reset between fixtures.
 
 `load_recordings(subset)` prüft beim Laden mehrerer Recordings auf
 Semantik-Homogenität und wirft, wenn `user`- und `total`-Accel gemischt würden.
