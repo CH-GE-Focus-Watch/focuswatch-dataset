@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from .. import schema as S
-from ..time_axis import median_rate_hz, sort_stable_by_time, to_unix_ns
+from ..time_axis import median_rate_hz, parse_iso_to_unix_ns, sort_stable_by_time
 from .base import RecordingBundle, RecordingRef, register
 
 # Why: this cohort's own participant ids (P1..P26) collide with ML4SCS's;
@@ -64,12 +64,7 @@ class AirPodsAdapter:
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
         raw = pd.read_csv(ref.path)
-        # Why: pandas' default datetime64 resolution from to_datetime is not
-        # pinned across versions (pandas 3 defaults to us, not ns) - `as_unit`
-        # fixes a known unit before the int64 view, then to_unix_ns does the
-        # final integer scaling so this never depends on the ambient default.
-        parsed = pd.to_datetime(raw["timestamp_iso"], format="ISO8601", utc=True).dt.as_unit("us")
-        t_ns = to_unix_ns(parsed.astype("int64").to_numpy(), "us")
+        t_ns = parse_iso_to_unix_ns(raw["timestamp_iso"])
 
         head = pd.DataFrame({"t_ns": t_ns})
         for src, dst in _MOTION_MAP.items():
@@ -94,8 +89,13 @@ class AirPodsAdapter:
             "has_pen": "pen" in tables,
             "has_markers": "markers" in tables,
             "has_attention": "attention" in tables,
-            "has_gravity": "gravity_x" in head.columns,
-            "has_quaternion": "quat_x" in head.columns,
+            # Why: has_gravity/has_quaternion are the Watch-Capabilities fields
+            # (docs/DESIGN.md:306-308) and describe the watch/ stream, which
+            # this source does not have at all. Head capabilities are a
+            # separate field pair - conflating them would have every AirPods
+            # manifest row claim watch gravity for a recording with no watch.
+            "has_head_gravity": "gravity_x" in head.columns,
+            "has_head_quaternion": "quat_x" in head.columns,
             "accel_semantics": "user",
             "accel_calibration": "fused",
             "gravity_source": "measured",
@@ -139,6 +139,21 @@ class AirPodsAdapter:
             "t_end_ns": np.array(ends, dtype=np.int64),
             "label": [lab for _, lab in intervals],
         })
+        # Why: the ground truth's offsets are relative to the *protocol*, not
+        # this recording's own stream length - if the head-IMU stream ends
+        # before the last offset, the closing interval's end (clamped to
+        # t_end) lands before its own start. That is a genuinely short
+        # recording, not a formatting quirk, and must fail loudly rather
+        # than publish a malformed (or silently clamped) interval.
+        bad = table[table["t_start_ns"] > table["t_end_ns"]]
+        if not bad.empty:
+            row = bad.iloc[0]
+            raise ValueError(
+                f"{len(bad)} attention interval(s) end before they start "
+                f"(e.g. label={row.label!r} t_start_ns={row.t_start_ns} > "
+                f"t_end_ns={row.t_end_ns}) - the head-IMU stream ends before its "
+                "own ground truth; this recording is shorter than its protocol"
+            )
         self._verify_expansion(table, t_ns, source_labels)
         return table
 

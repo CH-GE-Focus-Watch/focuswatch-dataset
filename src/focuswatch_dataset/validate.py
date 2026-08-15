@@ -218,41 +218,63 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
 
 
 # Which checks a recording must have produced, derived from its manifest flags.
-# A skipped check and a passed check are otherwise indistinguishable.
+# A skipped check and a passed check are otherwise indistinguishable. Keyed by
+# (recording_id, modality) - not just recording_id - so a check that ran for
+# one modality of a recording (e.g. headimu's own time_magnitude finding)
+# cannot silently satisfy a requirement declared for a different modality of
+# the same recording (e.g. a dropped attention table that still claims
+# has_attention). Every manifest flag maps to the modality name its findings
+# carry in `Finding.modality`, matching the table key every adapter and
+# `validate_recording` already use.
 _REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band", "gyro_range")
-# Every manifest flag backed by its own table in `validate_recording`'s `tables`
-# dict, and therefore expected to carry a time_magnitude finding.
-_MODALITY_FLAGS = ("has_watch", "has_watch_rawaccel", "has_headimu", "has_pen",
-                   "has_markers", "has_attention")
+_MODALITY_FLAGS = {
+    "has_watch": "watch", "has_watch_rawaccel": "watch_rawaccel", "has_headimu": "headimu",
+    "has_pen": "pen", "has_markers": "markers", "has_attention": "attention",
+}
+_MOTION_MODALITY_FLAGS = ("has_watch", "has_headimu", "has_watch_rawaccel")
 
 
 def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]:
     problems: list[str] = []
-    by_recording: dict[str, set[str]] = {}
+    by_recording_modality: dict[tuple[str, str], set[str]] = {}
     for f in findings:
-        by_recording.setdefault(f.recording_id, set()).add(f.check)
+        by_recording_modality.setdefault((f.recording_id, f.modality), set()).add(f.check)
 
     for _, row in manifest.iterrows():
         rid = row["recording_id"]
-        seen = by_recording.get(rid, set())
 
-        def require(check: str, reason: str) -> None:
-            if check not in seen:
-                problems.append(f"{rid}: {check} never ran ({reason})")
+        def seen(modality: str) -> set[str]:
+            return by_recording_modality.get((rid, modality), set())
 
-        if row.get("has_watch") or row.get("has_headimu") or row.get("has_watch_rawaccel"):
-            for check in _REQUIRED_MOTION_CHECKS:
-                require(check, "motion table present")
-        if any(row.get(flag) for flag in _MODALITY_FLAGS):
-            require("time_magnitude", "recording declares at least one modality")
+        def require(modality: str, check: str, reason: str) -> None:
+            if check not in seen(modality):
+                problems.append(f"{rid}/{modality}: {check} never ran ({reason})")
+
+        for flag in _MOTION_MODALITY_FLAGS:
+            if row.get(flag):
+                modality = _MODALITY_FLAGS[flag]
+                for check in _REQUIRED_MOTION_CHECKS:
+                    require(modality, check, "motion table present")
+        for flag, modality in _MODALITY_FLAGS.items():
+            if row.get(flag):
+                require(modality, "time_magnitude", f"{flag} is true")
+
+        # Why: has_gravity/has_quaternion are the Watch-Capabilities fields
+        # (docs/DESIGN.md) and describe the watch/ stream specifically;
+        # has_head_gravity/has_head_quaternion are the separate
+        # Head-Capabilities pair and describe the headimu stream.
         if row.get("has_gravity"):
-            require("gravity_norm", "has_gravity is true")
+            require("watch", "gravity_norm", "has_gravity is true")
         if row.get("has_quaternion"):
-            require("quat_norm", "has_quaternion is true")
-            if not ({"quat_gravity_agreement", "quat_still_agreement"} & seen):
+            require("watch", "quat_norm", "has_quaternion is true")
+            if not ({"quat_gravity_agreement", "quat_still_agreement"} & seen("watch")):
                 problems.append(
-                    f"{rid}: neither quat_gravity_agreement nor quat_still_agreement ran "
+                    f"{rid}/watch: neither quat_gravity_agreement nor quat_still_agreement ran "
                     "(has_quaternion is true)")
+        if row.get("has_head_gravity"):
+            require("headimu", "gravity_norm", "has_head_gravity is true")
+        if row.get("has_head_quaternion"):
+            require("headimu", "quat_norm", "has_head_quaternion is true")
         if row.get("has_pen"):
-            require("dot_type_vocabulary", "has_pen is true")
+            require("pen", "dot_type_vocabulary", "has_pen is true")
     return problems

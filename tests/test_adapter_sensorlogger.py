@@ -130,6 +130,32 @@ def test_raw_accel_goes_to_its_own_table(tmp_path):
     assert bundle.meta["has_watch_rawaccel"] is True
 
 
+def test_head_capability_flags_are_scoped_to_the_headphone_table(tmp_path):
+    """has_head_gravity/has_head_quaternion (fix-round-1 item 2) describe the
+    headimu stream specifically, distinct from has_gravity/has_quaternion,
+    which describe watch/. Both tables carry both columns in this fixture, so
+    both flag pairs must independently come back true."""
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["has_gravity"] is True
+    assert bundle.meta["has_quaternion"] is True
+    assert bundle.meta["has_head_gravity"] is True
+    assert bundle.meta["has_head_quaternion"] is True
+
+
+def test_head_capability_flags_are_false_without_a_headphone_table(tmp_path):
+    write_fixture(tmp_path, sid="E3_session2")
+    d = tmp_path / "E3_session2"
+    (d / "Headphone.csv").unlink()
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if r.recording_id.endswith("E3_session2"))
+    bundle = a.load(ref)
+    assert "headimu" not in bundle.tables
+    assert bundle.meta["has_head_gravity"] is False
+    assert bundle.meta["has_head_quaternion"] is False
+
+
 def test_missing_raw_accel_is_reported_not_faked(tmp_path):
     write_fixture(tmp_path, sid="E3_session1", with_rawaccel=False)
     a = SensorLoggerAdapter()

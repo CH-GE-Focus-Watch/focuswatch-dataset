@@ -252,3 +252,53 @@ def test_coverage_requires_time_magnitude_for_a_pen_only_recording():
     findings = validate_pen_table(df, "R1")
     problems = check_coverage(manifest, findings)
     assert any("time_magnitude" in p for p in problems)
+
+
+# --- Coverage matrix: per-modality scoping (fix-round-1 items 2/3) -------------
+#
+# check_coverage used to key its "which checks ran" set on recording_id alone,
+# so one modality's finding (e.g. watch's own time_magnitude) could silently
+# satisfy a requirement declared for a different, absent modality of the same
+# recording (e.g. headimu). These pin the (recording_id, modality) scoping.
+
+def test_coverage_time_magnitude_is_scoped_per_modality_not_per_recording():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False, "has_head_gravity": False,
+                              "has_head_quaternion": False}])
+    watch = make_watch()
+    findings = validate_motion_table(watch, "R1", "watch", 100.0)
+    # has_headimu is true but no headimu table ever reached validate_recording -
+    # watch's own time_magnitude finding must not cover for it.
+    findings += validate_recording("R1", {"watch": watch}, {})
+    problems = check_coverage(manifest, findings)
+    assert any("time_magnitude" in p and "headimu" in p for p in problems)
+
+
+def test_coverage_requires_head_gravity_norm_specifically_on_headimu():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False, "has_head_gravity": True,
+                              "has_head_quaternion": False}])
+    # Watch's own gravity_norm finding (from make_watch's gravity column) must
+    # not satisfy has_head_gravity - no headimu table was ever validated.
+    watch = make_watch()
+    findings = validate_motion_table(watch, "R1", "watch", 100.0)
+    findings += validate_recording("R1", {"watch": watch}, {})
+    problems = check_coverage(manifest, findings)
+    assert any("gravity_norm" in p and "headimu" in p for p in problems)
+
+
+def test_coverage_requires_head_quat_norm_specifically_on_headimu():
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": True,
+                              "has_gravity": True, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False, "has_head_gravity": False,
+                              "has_head_quaternion": True}])
+    watch = make_watch()
+    findings = validate_motion_table(watch, "R1", "watch", 100.0)
+    findings += validate_recording("R1", {"watch": watch}, {})
+    problems = check_coverage(manifest, findings)
+    assert any("quat_norm" in p and "headimu" in p for p in problems)

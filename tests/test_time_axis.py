@@ -4,12 +4,15 @@ import pytest
 from hypothesis import given, strategies as st
 
 from focuswatch_dataset.time_axis import (
-    classify_time_unit, median_rate_hz, sort_stable_by_time, to_unix_ns,
+    classify_time_unit, median_rate_hz, parse_iso_to_unix_ns, sort_stable_by_time, to_unix_ns,
 )
 
 # Reference epochs taken from the real corpora.
 EGE_MS = 1780577357025
 SL_NS = 1780853585220_000_000
+# From the AirPods corpus's timestamp_iso column.
+AIRPODS_ISO = "2026-04-28T12:29:29.515Z"
+AIRPODS_ISO_NS = 1777379369515000000
 
 
 @pytest.mark.parametrize("values,expected", [
@@ -65,6 +68,27 @@ def test_classify_time_unit_raises_on_unmatched_magnitude():
 def test_to_unix_ns_rejects_session_relative():
     with pytest.raises(ValueError):
         to_unix_ns(np.array([800106.0]), "session_relative")
+
+
+def test_parse_iso_to_unix_ns_pins_a_known_value():
+    # Why: pins the exact int64 nanosecond value for a known ISO timestamp,
+    # so a future pandas datetime-resolution default change (see pandas 3's
+    # switch from ns to us) fails this test loudly instead of silently
+    # scaling every parsed timestamp by 1000.
+    out = parse_iso_to_unix_ns([AIRPODS_ISO])
+    assert out.dtype == np.int64
+    assert out[0] == AIRPODS_ISO_NS
+
+
+def test_parse_iso_to_unix_ns_accepts_a_pandas_series():
+    out = parse_iso_to_unix_ns(pd.Series([AIRPODS_ISO, AIRPODS_ISO]))
+    assert list(out) == [AIRPODS_ISO_NS, AIRPODS_ISO_NS]
+
+
+def test_parse_iso_to_unix_ns_preserves_millisecond_spacing():
+    iso = ["2026-04-28T12:29:29.515Z", "2026-04-28T12:29:29.555Z"]  # 40 ms apart
+    out = parse_iso_to_unix_ns(iso)
+    assert out[1] - out[0] == 40_000_000
 
 
 def test_stable_sort_preserves_order_within_ties():

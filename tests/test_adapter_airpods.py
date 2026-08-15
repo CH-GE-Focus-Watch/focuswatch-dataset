@@ -10,15 +10,26 @@ from focuswatch_dataset.validate import check_coverage, validate_motion_table, v
 GT = "0:00 focused\n4:00 distracted\n9:30 focused\n"
 
 
-def write_fixture(root, pid="P1", n=1500, fs=25.0):
+def write_fixture(root, pid="P1", n=15500, fs=25.0):
     rng = np.random.default_rng(3)
-    rots = Rotation.random(n, random_state=3)
+    # Why: small perturbations around an upright head orientation, not a full
+    # SO(3)-random sample - a head never tips upside down during a recording
+    # session, and a full-sphere sample makes the validator's gravity_sign
+    # "flat" subset genuinely bimodal (roughly half the flat-classified
+    # samples land near +1, half near -1), so its median becomes an
+    # unstable coin flip on n and seed rather than a real physical signal.
+    rots = Rotation.from_rotvec(rng.normal(0, 0.3, (n, 3)))
     q, grav = rots.as_quat(), rots.inv().apply([0.0, 0.0, -1.0])
     t0 = pd.Timestamp("2026-04-28T12:29:29.515Z")
-    iso = (t0 + pd.to_timedelta(np.arange(n) / fs, unit="s")).strftime("%Y-%m-%dT%H:%M:%S.%f").str[:-3] + "Z"
-    labels = np.where(np.arange(n) / fs < 240, "focused", "distracted")
+    t_rel = np.arange(n) / fs
+    iso = (t0 + pd.to_timedelta(t_rel, unit="s")).strftime("%Y-%m-%dT%H:%M:%S.%f").str[:-3] + "Z"
+    # Why: mirrors parse_ground_truth(GT)'s three segments (0-240 focused,
+    # 240-570 distracted, 570+ focused), not just the first - the default
+    # duration now runs past the last GT offset (570 s) so every emitted
+    # attention interval is well-formed (t_start_ns <= t_end_ns).
+    labels = np.select([t_rel < 240, t_rel < 570], ["focused", "distracted"], default="focused")
     pd.DataFrame({
-        "timestamp_iso": iso, "sensor_timestamp_s": 6679.42 + np.arange(n) / fs,
+        "timestamp_iso": iso, "sensor_timestamp_s": 6679.42 + t_rel,
         "attitude_roll_rad": 0.0, "attitude_pitch_rad": 0.0, "attitude_yaw_rad": 0.0,
         "quaternion_x": q[:, 0], "quaternion_y": q[:, 1], "quaternion_z": q[:, 2], "quaternion_w": q[:, 3],
         "rotation_rate_x_rad_s": rng.normal(0, 0.04, n),
@@ -75,6 +86,18 @@ def test_expansion_crosscheck_rejects_a_wrong_clock_anchor(tmp_path):
         a.load(a.discover(tmp_path)[0])
 
 
+def test_inverted_interval_fails_loudly_instead_of_publishing_malformed_data(tmp_path):
+    """A stream shorter than its ground truth's last offset produces a closing
+    interval whose end (clamped to the stream's own last sample) lands before
+    its start. That must raise, not silently clamp or publish it - Task 16
+    needs to hear about a genuinely short recording, not receive a malformed
+    row."""
+    write_fixture(tmp_path, n=1500, fs=25.0)   # 60 s of data; GT runs to 570 s
+    a = AirPodsAdapter()
+    with pytest.raises(ValueError, match="shorter than its protocol"):
+        a.load(a.discover(tmp_path)[0])
+
+
 def test_no_watch_table_and_flags_say_so(tmp_path):
     write_fixture(tmp_path)
     a = AirPodsAdapter()
@@ -101,12 +124,12 @@ def test_loaded_headimu_passes_the_validator(tmp_path):
 
 # --- Coverage-matrix consistency ------------------------------------------------
 #
-# The manifest flags this adapter emits (has_headimu, has_attention, has_gravity,
-# has_quaternion, ...) are what feeds check_coverage - a flag that says "true"
-# without the matching table/columns actually present would let the coverage
-# matrix silently wave a missing physical check through. This test runs the
-# real bundle through the real gate end to end, not just the adapter's own
-# opinion of itself.
+# The manifest flags this adapter emits (has_headimu, has_attention,
+# has_head_gravity, has_head_quaternion, ...) are what feeds check_coverage -
+# a flag that says "true" without the matching table/columns actually present
+# would let the coverage matrix silently wave a missing physical check
+# through. This test runs the real bundle through the real gate end to end,
+# not just the adapter's own opinion of itself.
 
 def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     write_fixture(tmp_path)
@@ -122,8 +145,8 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
         "has_pen": bundle.meta["has_pen"],
         "has_markers": bundle.meta["has_markers"],
         "has_attention": bundle.meta["has_attention"],
-        "has_gravity": bundle.meta["has_gravity"],
-        "has_quaternion": bundle.meta["has_quaternion"],
+        "has_head_gravity": bundle.meta["has_head_gravity"],
+        "has_head_quaternion": bundle.meta["has_head_quaternion"],
     }])
     findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
                                      bundle.meta["head_hz_nominal"])
@@ -134,19 +157,40 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
 def test_coverage_matrix_flags_a_stale_has_attention():
     """A manifest that claims has_attention while no attention (or any other)
     table ever produced a time_magnitude finding must be rejected - this is
-    the check that catches a flag drifting from the data it describes.
-
-    Isolated from a full bundle deliberately: check_coverage's time_magnitude
-    requirement is per-recording, not per-modality (any table's finding
-    satisfies it), so a headimu table sitting alongside a dropped attention
-    table would mask exactly the drift this test needs to expose.
-    """
+    the check that catches a flag drifting from the data it describes."""
     manifest = pd.DataFrame([{
         "recording_id": "AIRPODS-P1",
         "has_watch": False, "has_watch_rawaccel": False, "has_headimu": False,
         "has_pen": False, "has_markers": False,
         "has_attention": True,                     # stale: nothing below backs it
-        "has_gravity": False, "has_quaternion": False,
+        "has_head_gravity": False, "has_head_quaternion": False,
     }])
     problems = check_coverage(manifest, [])
     assert any("time_magnitude" in p for p in problems)
+
+
+def test_coverage_matrix_catches_a_stale_attention_flag_beside_a_real_headimu(tmp_path):
+    """Regression for the (recording_id, modality) fix to check_coverage:
+    before it, headimu's own time_magnitude finding masked a dropped
+    attention table that still claimed has_attention - the exact case a
+    real AirPods bundle produces (headimu is always present alongside
+    attention). Scoped per-modality, headimu's finding must no longer cover
+    for a missing attention finding."""
+    write_fixture(tmp_path)
+    a = AirPodsAdapter()
+    ref = a.discover(tmp_path)[0]
+    bundle = a.load(ref)
+
+    manifest = pd.DataFrame([{
+        "recording_id": ref.recording_id,
+        "has_watch": False, "has_watch_rawaccel": False, "has_headimu": True,
+        "has_pen": False, "has_markers": False,
+        "has_attention": True,                      # stale: attention table dropped below
+        "has_head_gravity": bundle.meta["has_head_gravity"],
+        "has_head_quaternion": bundle.meta["has_head_quaternion"],
+    }])
+    findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
+                                     bundle.meta["head_hz_nominal"])
+    findings += validate_recording(ref.recording_id, {"headimu": bundle.tables["headimu"]}, bundle.meta)
+    problems = check_coverage(manifest, findings)
+    assert any("time_magnitude" in p and "attention" in p for p in problems)

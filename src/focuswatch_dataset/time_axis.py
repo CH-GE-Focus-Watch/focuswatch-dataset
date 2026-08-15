@@ -51,6 +51,20 @@ def to_unix_ns(values: np.ndarray, unit: str) -> np.ndarray:
     return whole.astype(np.int64) * factor + np.rint(frac * factor).astype(np.int64)
 
 
+def parse_iso_to_unix_ns(values, iso_format: str = "ISO8601") -> np.ndarray:
+    """Parse ISO-8601 timestamp strings to int64 Unix nanoseconds.
+
+    pandas' default datetime64 resolution from `to_datetime` is not pinned
+    across versions - pandas 3 defaults to microseconds, not nanoseconds, so
+    a plain `.astype("int64")` after it silently scales by the wrong factor
+    (1000x too small) instead of raising. `as_unit` fixes a known resolution
+    before the int64 view; the result is then routed through `to_unix_ns`'s
+    integer path so the final scaling never depends on the ambient default.
+    """
+    parsed = pd.to_datetime(pd.Series(values), format=iso_format, utc=True).dt.as_unit("us")
+    return to_unix_ns(parsed.astype("int64").to_numpy(), "us")
+
+
 def sort_stable_by_time(df: pd.DataFrame, column: str = TIME_COLUMN) -> pd.DataFrame:
     # Why: batched captures share timestamps; an unstable sort reorders tied samples.
     return df.sort_values(column, kind="stable").reset_index(drop=True)

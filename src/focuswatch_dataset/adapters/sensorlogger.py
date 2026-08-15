@@ -106,6 +106,13 @@ class SensorLoggerAdapter:
             "watch_hz_nominal": _watch_hz_nominal(d / "Metadata.csv"),
             "has_gravity": "gravity_x" in tables["watch"].columns,
             "has_quaternion": "quat_x" in tables["watch"].columns,
+            # Why: the Head-Capabilities pair, kept distinct from the
+            # Watch-Capabilities has_gravity/has_quaternion above - the
+            # headphone stream's gravity is real (measured, harmonised from
+            # m/s2) and must feed its own coverage requirement, not the
+            # watch's.
+            "has_head_gravity": "headimu" in tables and "gravity_x" in tables["headimu"].columns,
+            "has_head_quaternion": "headimu" in tables and "quat_x" in tables["headimu"].columns,
             "has_watch_rawaccel": "watch_rawaccel" in tables,
             "has_pen": "pen" in tables,
             "accel_semantics": "user", "accel_calibration": "fused",
