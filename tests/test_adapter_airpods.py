@@ -107,6 +107,28 @@ def test_no_watch_table_and_flags_say_so(tmp_path):
     assert bundle.meta["has_attention"] is True
 
 
+def test_gravity_source_agrees_with_the_absent_watch_stream(tmp_path):
+    """Fix-round-2 item 1: gravity_source is has_gravity's direct companion -
+    with no watch table (has_watch False, no has_gravity key at all any
+    more), it must not still claim "measured", which would openly
+    contradict the same row."""
+    write_fixture(tmp_path)
+    a = AirPodsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["gravity_source"] == "none"
+
+
+def test_accel_semantics_still_describes_the_single_motion_stream(tmp_path):
+    """Fix-round-2 item 2: unlike gravity_source, accel_semantics is not
+    blanked - docs/DESIGN.md's watch/-only scoping is a disambiguation rule
+    for recordings with several accel streams, and AirPods has exactly one."""
+    write_fixture(tmp_path)
+    a = AirPodsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["accel_semantics"] == "user"
+    assert bundle.meta["accel_calibration"] == "fused"
+
+
 def test_measured_head_rate_is_reported(tmp_path):
     write_fixture(tmp_path, fs=25.0)
     a = AirPodsAdapter()

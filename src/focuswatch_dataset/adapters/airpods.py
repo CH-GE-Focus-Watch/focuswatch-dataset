@@ -96,9 +96,25 @@ class AirPodsAdapter:
             # manifest row claim watch gravity for a recording with no watch.
             "has_head_gravity": "gravity_x" in head.columns,
             "has_head_quaternion": "quat_x" in head.columns,
+            # Why: accel_semantics/accel_calibration and gravity_source are
+            # not symmetric here, despite both being Watch-Capabilities
+            # fields. docs/DESIGN.md:317-318 scopes accel_semantics to
+            # watch/ only as a DISAMBIGUATION rule for recordings with
+            # several accel streams; AirPods has exactly one motion stream,
+            # so there is nothing to disambiguate and it honestly describes
+            # that stream. gravity_source has no such exemption - it is
+            # has_gravity's direct companion, and has_gravity is correctly
+            # False here (no watch/ stream at all), so "measured" would
+            # openly contradict it in the same row. Derived the way
+            # ml4scs.py derives it, from the watch table's columns; this
+            # source never builds one, so it always resolves to "none" - the
+            # head stream's own gravity is carried by has_head_gravity. Do
+            # not "fix" one of these two fields into agreement with the
+            # other; they answer genuinely different questions.
             "accel_semantics": "user",
             "accel_calibration": "fused",
-            "gravity_source": "measured",
+            "gravity_source": "measured" if "gravity_x" in tables.get("watch", pd.DataFrame()).columns
+                              else "none",
             # Why: the export states no nominal head rate anywhere (no rate
             # column, no fixed-Hz claim in the corpus docs) and the measured
             # rate itself varies recording to recording - declaring a nominal
