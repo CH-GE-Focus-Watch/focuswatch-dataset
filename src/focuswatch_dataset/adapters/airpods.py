@@ -27,6 +27,17 @@ _RECORDING = re.compile(r"^(P\d+)_.*_labeled\.csv$")
 _GT_LINE = re.compile(r"^\s*(\d+):(\d{2})\s+(\S+)\s*$")
 _GT_DIR = "1_Data_Protocols+GroundTruth"
 
+# I13: the `*_protokoll_*.txt` block table beside each `*_ground_truth_*.txt`
+# ("  1 |   0:00 |   3:00 |   3:00 | focused     | Abschreiben ...") -
+# idx | start mm:ss | end mm:ss | duration mm:ss | label | free-text activity.
+_PROTOCOL_ROW = re.compile(
+    r"^\s*\d+\s*\|\s*(\d+):(\d{2})\s*\|\s*(\d+):(\d{2})\s*\|\s*\d+:\d{2}\s*\|\s*(\S+)\s*\|\s*(.+?)\s*$"
+)
+# I14: "Gesamtdauer" (total duration), stated elsewhere in the same file -
+# cross-checked when it parses, never depended on (the core tail computation
+# uses the last block's own end instead, since blocks are contiguous).
+_GESAMTDAUER = re.compile(r"Gesamtdauer\D*(\d+):(\d{2})")
+
 # Source states plain values (accel norm 0.0156 -> userAcceleration; gravity
 # norm 1.0000 -> already in g), so this is a rename, not a unit conversion.
 _MOTION_MAP = {
@@ -48,6 +59,24 @@ def parse_ground_truth(text: str) -> list[tuple[float, str]]:
         if m:
             out.append((int(m.group(1)) * 60 + int(m.group(2)), m.group(3)))
     return [(float(s), lab) for s, lab in out]
+
+
+def parse_protocol(text: str) -> list[tuple[float, float, str, str]]:
+    """Parse `idx | start | end | duration | label | activity` block rows.
+
+    Returns (start_s, end_s, label, activity) per block, file order. The
+    German source text is umlaut-free ASCII already ("Loesen", "Uebergaenge")
+    and is published verbatim - a translated label would no longer be the
+    observer's own record.
+    """
+    out = []
+    for line in text.splitlines():
+        m = _PROTOCOL_ROW.match(line)
+        if m:
+            start = int(m.group(1)) * 60 + int(m.group(2))
+            end = int(m.group(3)) * 60 + int(m.group(4))
+            out.append((float(start), float(end), m.group(5), m.group(6)))
+    return out
 
 
 class AirPodsAdapter:
@@ -75,7 +104,7 @@ class AirPodsAdapter:
         head = sort_stable_by_time(head)
 
         tables = {"headimu": head}
-        attention = self._attention(ref, t_ns, raw["label"])
+        attention, tail_s = self._attention(ref, t_ns, raw["label"])
         if attention is not None:
             tables["attention"] = attention
 
@@ -149,27 +178,34 @@ class AirPodsAdapter:
             # check rather than asserting a guessed value (see validate.py's
             # spill_guard skip-when-absent path).
             "session_start_ns": None,
+            # Why (I14): internal-only (manifest._INTERNAL_META_KEYS) -
+            # surfaced as a validate.py Finding (attention_protocol_tail),
+            # not a manifest column; the measured value is the point, and it
+            # never gates a build (P14's +44.55 s is a real recording).
+            "attention_protocol_tail_s": tail_s,
         }
         return RecordingBundle(ref, tables, meta)
 
     def _attention(self, ref: RecordingRef, t_ns: np.ndarray,
-                   source_labels: pd.Series) -> pd.DataFrame | None:
+                   source_labels: pd.Series) -> tuple[pd.DataFrame | None, float | None]:
         pid = ref.recording_id.removeprefix(f"{COHORT}-")
         gt_dir = ref.path.parent / _GT_DIR
         matches = sorted(gt_dir.glob(f"{pid}_ground_truth_*.txt")) if gt_dir.exists() else []
         if not matches:
-            return None
+            return None, None
         intervals = parse_ground_truth(matches[0].read_text())
         if not intervals:
-            return None
+            return None, None
+        rows, tail_s = self._resolve_blocks(gt_dir, pid, intervals, t_ns)
 
         t0, t_end = int(t_ns.min()), int(t_ns.max())
-        starts = [t0 + int(round(s * 1e9)) for s, _ in intervals]
+        starts = [t0 + int(round(s * 1e9)) for s, _, _ in rows]
         ends = starts[1:] + [t_end]
         table = pd.DataFrame({
             "t_start_ns": np.array(starts, dtype=np.int64),
             "t_end_ns": np.array(ends, dtype=np.int64),
-            "label": [lab for _, lab in intervals],
+            "label": [lab for _, lab, _ in rows],
+            "activity": [act for _, _, act in rows],
         })
         # Why: the ground truth's offsets are relative to the *protocol*, not
         # this recording's own stream length - if the head-IMU stream ends
@@ -187,7 +223,67 @@ class AirPodsAdapter:
                 "own ground truth; this recording is shorter than its protocol"
             )
         self._verify_expansion(table, t_ns, source_labels)
-        return table
+        return table, tail_s
+
+    @staticmethod
+    def _resolve_blocks(gt_dir: Path, pid: str, intervals: list[tuple[float, str]],
+                        t_ns: np.ndarray) -> tuple[list[tuple[float, str, str]], float | None]:
+        """I13/I14: rows for the attention table, at protocol-block granularity.
+
+        The observer's `*_ground_truth_*.txt` is the sibling `*_protokoll_*.txt`
+        with adjacent same-label blocks merged - verified across all 26 pairs in
+        the corpus (boundaries a subset, labels identical, merge reproduces the
+        file exactly). Publishing the blocks is therefore lossless in the
+        direction that matters: merging adjacent same-label rows reproduces the
+        ground truth, while the reverse cannot recover the activities. So each
+        row carries exactly one activity instead of several joined into a cell.
+
+        The merge equality is the check that ties the two files together, and it
+        fails loudly rather than silently preferring one. Without a protocol the
+        ground-truth intervals stand as rows with an empty activity - the column
+        exists either way, since a column that appears only sometimes within one
+        modality is the schema drift I15 fixes elsewhere.
+
+        The tail (I14) is reported, never enforced. Measured across the 25
+        recordings it runs -0.47 s to +44.55 s, 18 of them within a second: the
+        negatives are sub-second, the stream ending a fraction before the
+        protocol's nominal end rather than starting late. P14's +44.55 s is a
+        real recording and must not fail a strict build.
+        """
+        plain = [(s, lab, "") for s, lab in intervals]
+        matches = sorted(gt_dir.glob(f"{pid}_protokoll_*.txt")) if gt_dir.exists() else []
+        if not matches:
+            return plain, None
+        path = matches[0]
+        text = path.read_text()
+        blocks = parse_protocol(text)
+        if not blocks:
+            return plain, None
+
+        merged: list[tuple[float, str]] = []
+        for start, _end, label, _activity in blocks:
+            if not merged or merged[-1][1] != label:
+                merged.append((start, label))
+        if len(merged) != len(intervals) or any(
+                abs(m_start - gt_start) > 0.5 or m_label != gt_label
+                for (m_start, m_label), (gt_start, gt_label) in zip(merged, intervals)):
+            raise ValueError(
+                f"{path}: merging adjacent same-label protocol blocks yields {merged}, "
+                f"but the ground truth states {intervals} - the two files disagree"
+            )
+
+        protocol_total_s = blocks[-1][1]   # blocks are contiguous - last end = declared total
+        m = _GESAMTDAUER.search(text)
+        if m:
+            stated_s = int(m.group(1)) * 60 + int(m.group(2))
+            if abs(stated_s - protocol_total_s) > 1.0:
+                raise ValueError(
+                    f"{path}: block end ({protocol_total_s}s) disagrees with its own "
+                    f"stated Gesamtdauer ({stated_s}s)"
+                )
+        recording_s = (int(t_ns.max()) - int(t_ns.min())) / 1e9
+        return ([(s, label, activity) for s, _e, label, activity in blocks],
+                recording_s - protocol_total_s)
 
     @staticmethod
     def _verify_expansion(table: pd.DataFrame, t_ns: np.ndarray,

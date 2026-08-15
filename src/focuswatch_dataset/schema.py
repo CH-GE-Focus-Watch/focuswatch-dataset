@@ -73,6 +73,12 @@ ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
 
+# M8: the AirPods attention label vocabulary, measured across all 26
+# ground-truth files (51 `focused` intervals, 53 `distracted`) - closed now
+# that it is known, so a typo in a future observer `.txt` is caught rather
+# than silently becoming its own class.
+ATTENTION_LABELS = ("distracted", "focused")
+
 # The three motion-table modalities a recording can carry (build.py's
 # validation dispatch and validate.detect_dropouts both key off this - one
 # table, not two kept in agreement by memory).

@@ -51,8 +51,8 @@ from .adapters.base import RecordingBundle
 from .manifest import build_channels, build_manifest, check_manifest_consistency
 from .redact import RedactionPolicy, redact_bundle
 from .validate import (
-    Finding, ValidationReport, check_coverage, detect_dropouts, validate_motion_table,
-    validate_pen_table, validate_recording,
+    Finding, ValidationReport, check_coverage, detect_dropouts, validate_attention_table,
+    validate_motion_table, validate_pen_table, validate_recording,
 )
 from .write import write_table
 
@@ -100,6 +100,8 @@ def _validate(bundle: RecordingBundle) -> list:
                                               bundle.ref.recording_id, modality, nominal)
     if "pen" in bundle.tables:
         findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
+    if "attention" in bundle.tables:
+        findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
     findings += validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
     return findings
 

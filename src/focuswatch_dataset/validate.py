@@ -177,6 +177,13 @@ def validate_pen_table(df: pd.DataFrame, recording_id: str) -> list[Finding]:
                     ", ".join(unknown) or "-", f"subset of {S.DOT_TYPES}", not unknown)]
 
 
+def validate_attention_table(df: pd.DataFrame, recording_id: str) -> list[Finding]:
+    """M8: the attention label vocabulary is now known and closed (schema.ATTENTION_LABELS)."""
+    unknown = sorted(set(df["label"]) - set(S.ATTENTION_LABELS))
+    return [Finding("attention_label_vocabulary", recording_id, "attention", "label",
+                    ", ".join(unknown) or "-", f"subset of {S.ATTENTION_LABELS}", not unknown)]
+
+
 _INTERVAL_START, _INTERVAL_END = "t_start_ns", "t_end_ns"
 # A contemporary wall clock in nanoseconds; anything far below is session-relative.
 _EPOCH_NS_MIN, _EPOCH_NS_MAX = 1e18, 2e18
@@ -292,6 +299,27 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
         add("payload_keys_redacted", "markers", dropped_keys,
             "payload keys outside schema.MARKER_PAYLOAD_ALLOWED_KEYS are dropped before "
             "publication, not silently kept", True)
+
+    # I14: the observer timeline is checkable. The attention intervals are
+    # constructed anchored to headimu's own first/last sample (airpods.py's
+    # _attention), so this should always hold by construction - it is a
+    # cross-modality structural invariant worth checking directly, not an
+    # assumption about how the adapter built the table.
+    if "attention" in spans and "headimu" in spans:
+        a_lo, a_hi = spans["attention"]
+        h_lo, h_hi = spans["headimu"]
+        add("attention_within_headimu_range", "attention", f"[{a_lo}, {a_hi}]",
+            f"inside headimu range [{h_lo}, {h_hi}]", h_lo <= a_lo and a_hi <= h_hi)
+
+    # I14: reports a quantity rather than gating one, so it always passes -
+    # P14's +44 s is a real recording and must not fail a strict build. The
+    # tail is computed by airpods.py (it alone has the parsed protocol total)
+    # and passed through meta, the same pattern as session_start_ns.
+    tail_s = meta.get("attention_protocol_tail_s")
+    if tail_s is not None:
+        add("attention_protocol_tail", "attention", round(tail_s, 3),
+            "recording length minus the protocol's declared Gesamtdauer - measured "
+            "-0.47 s to +44.55 s across the 25 recordings, 18 within +/-1 s", True)
 
     # I6: accel_semantics must agree with which acceleration columns the
     # motion table actually carries - "total" implies accel_total_*, "user"
@@ -425,4 +453,9 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
                     "(has_quaternion is true)")
         if row.get("has_pen"):
             require("pen", "dot_type_vocabulary", "has_pen is true")
+        if row.get("has_attention"):
+            require("attention", "attention_label_vocabulary", "has_attention is true")
+            if row.get("has_headimu"):
+                require("attention", "attention_within_headimu_range",
+                       "has_attention and has_headimu are true")
     return problems

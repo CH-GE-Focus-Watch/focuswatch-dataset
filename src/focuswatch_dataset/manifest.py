@@ -87,6 +87,10 @@ _INTERNAL_META_KEYS = frozenset({
     # validate.py Finding (payload_keys_redacted) in validation_report.json,
     # not as a sessions.parquet column.
     "src_payload_dropped_key_count",
+    # Why (I14): likewise a diagnostic, not a bundle fact - surfaced as a
+    # validate.py Finding (attention_protocol_tail), which reports the
+    # measured value and never gates a build.
+    "attention_protocol_tail_s",
 })
 
 # Why: these are the flags check_coverage gates required physical checks on -
@@ -343,6 +347,10 @@ _KNOWN_METADATA_COLUMNS: dict[str, tuple[str, str]] = {
     "tilt_x": ("device_native", "pen_tilt"),
     "tilt_y": ("device_native", "pen_tilt"),
     "label": ("category", "attention_state"),
+    # Why (I13): free text (the observer's own activity description, e.g.
+    # "Loesen von Matheaufgaben"), not a closed enumerated set - "category"
+    # would misdescribe it the way it correctly describes `label` above.
+    "activity": ("n/a", "observer_activity"),
     "event": ("category", "study_event"),
     "task_id": ("category", "study_task_id"),
     "task_name": ("category", "study_task_name"),

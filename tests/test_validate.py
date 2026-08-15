@@ -5,8 +5,8 @@ from scipy.spatial.transform import Rotation
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.time_axis import median_rate_hz
 from focuswatch_dataset.validate import (
-    ValidationReport, check_coverage, validate_motion_table, validate_pen_table,
-    validate_recording,
+    ValidationReport, check_coverage, validate_attention_table, validate_motion_table,
+    validate_pen_table, validate_recording,
 )
 
 
@@ -89,6 +89,20 @@ def test_pen_framing_sentinel_is_allowed():
     df = pd.DataFrame({"t_ns": [1, 2], "dot_type": ["PEN_DOWN", "PEN_UP"],
                        "x": [-1.0, 2.0], "y": [-1.0, 2.0]})
     assert failed_checks(validate_pen_table(df, "R1")) == set()
+
+
+def test_attention_label_vocabulary_is_checked():
+    """M8: the attention vocabulary is now closed (schema.ATTENTION_LABELS =
+    focused/distracted, measured across all 26 ground-truth files) - a typo
+    in a future observer .txt must not silently become its own class."""
+    df = pd.DataFrame({"t_start_ns": [1, 2], "t_end_ns": [2, 3], "label": ["focused", "tired"]})
+    assert "attention_label_vocabulary" in failed_checks(validate_attention_table(df, "R1"))
+
+
+def test_attention_label_vocabulary_allows_the_known_pair():
+    df = pd.DataFrame({"t_start_ns": [1, 2], "t_end_ns": [2, 3],
+                       "label": ["focused", "distracted"]})
+    assert failed_checks(validate_attention_table(df, "R1")) == set()
 
 
 def test_report_serialises_and_reports_failure():
@@ -179,6 +193,46 @@ def test_declared_time_unit_must_match_the_magnitude():
     assert "time_magnitude" in failed_checks(findings)
 
 
+def _headimu(t0_ns, n=1000, fs=25.0):
+    return pd.DataFrame({"t_ns": t0_ns + (np.arange(n, dtype=np.int64) * int(1e9 / fs))})
+
+
+def test_attention_interval_outside_headimu_range_fails():
+    """I14: the attention intervals must fall inside the head-IMU time range -
+    a cross-modality structural invariant, checked directly rather than
+    assumed from how the adapter happened to build the table."""
+    head = _headimu(0)
+    head_end = int(head["t_ns"].max())
+    attention = pd.DataFrame({
+        "t_start_ns": [0], "t_end_ns": [head_end + 10 ** 9],   # 1s past the head-IMU stream's end
+        "label": ["focused"],
+    })
+    findings = validate_recording("R1", {"headimu": head, "attention": attention}, {})
+    assert "attention_within_headimu_range" in failed_checks(findings)
+
+
+def test_attention_interval_inside_headimu_range_passes():
+    head = _headimu(0)
+    head_end = int(head["t_ns"].max())
+    attention = pd.DataFrame({"t_start_ns": [0], "t_end_ns": [head_end], "label": ["focused"]})
+    findings = validate_recording("R1", {"headimu": head, "attention": attention}, {})
+    assert "attention_within_headimu_range" not in failed_checks(findings)
+
+
+def test_attention_protocol_tail_is_reported_when_present_in_meta():
+    """I14: informational only - present whenever the adapter computed a
+    tail, absent (not a Finding at all, not a failure) when it did not."""
+    findings = validate_recording("R1", {"watch": make_watch(n=10)}, {"attention_protocol_tail_s": 19.96})
+    tail = next(f for f in findings if f.check == "attention_protocol_tail")
+    assert tail.observed == 19.96
+    assert tail.passed is True
+
+
+def test_attention_protocol_tail_is_absent_when_not_in_meta():
+    findings = validate_recording("R1", {"watch": make_watch(n=10)}, {})
+    assert "attention_protocol_tail" not in {f.check for f in findings}
+
+
 # --- I6: accel_semantics must agree with which accel columns are present -------
 
 def test_accel_semantics_total_requires_accel_total_columns():
@@ -264,6 +318,34 @@ def test_coverage_requires_a_rawaccel_table_that_never_arrived():
     assert any("sample_rate" in p for p in problems)
     assert any("accel_semantic_band" in p for p in problems)
     assert any("time_magnitude" in p for p in problems)
+
+
+def test_coverage_requires_the_attention_checks_that_never_ran():
+    """The attention requirements added with M8/I14 were themselves unguarded -
+    deleting both `require` calls left 264/264 green. The coverage matrix exists
+    because a skipped check is indistinguishable from a passed one, so the line
+    that makes a check mandatory has to be the best-guarded one of all: an
+    adapter emitting no attention findings at all must be caught.
+    """
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": True}])
+    problems = check_coverage(manifest, [])
+    assert any("attention_label_vocabulary" in p for p in problems)
+    assert any("attention_within_headimu_range" in p for p in problems)
+
+
+def test_coverage_never_requires_the_range_check_without_a_head_stream():
+    """`attention_within_headimu_range` compares two spans, so it cannot run
+    when only one exists - requiring it there would be a permanent false alarm,
+    the same reasoning that exempts gyro_range on rawaccel below."""
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": False, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": True}])
+    problems = check_coverage(manifest, [])
+    assert not any("attention_within_headimu_range" in p for p in problems)
 
 
 def test_coverage_never_requires_gyro_range_on_rawaccel():
