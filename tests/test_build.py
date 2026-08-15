@@ -483,3 +483,36 @@ def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):
     assert rc == 1
     printed = capsys.readouterr().out
     assert "build failed" in printed
+
+
+def test_annotation_tables_publish_one_schema_across_cohorts(tmp_path):
+    """I15: markers arrived with two shapes - ML4SCS had seven columns, ETH nine
+    (`src_payload`, `src_t_session_ms`), and `task_index` was float64 with NaN in
+    one cohort and int64 with a -1 sentinel in the other. A reuser concatenating
+    them got a ragged frame in which `task_index >= 0` filtered differently per
+    cohort, and the package descriptor could state no single schema per
+    modality. Removing either ML4SCS column left 41/41 green before this.
+
+    Scoped to the annotation tables, and the exclusion is not a weakening. A
+    motion table's columns are a statement about what the device measured: Ege's
+    head stream carries no gyroscope and no gravity, declared through
+    has_head_gyro and enforced by check_coverage. Flattening those to one schema
+    would publish empty channels asserting sensors that never existed.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+
+    annotation = {"markers", "attention", "pen"}
+    checked = 0
+    for d in sorted(p for p in out.iterdir() if p.is_dir() and p.name in annotation):
+        shapes = {}
+        for f in sorted(d.glob("*.parquet")):
+            df = read_table(f)
+            shapes.setdefault(
+                (tuple(df.columns), tuple(str(t) for t in df.dtypes)), []).append(f.name)
+        assert len(shapes) == 1, (
+            f"{d.name}: {len(shapes)} schemas across cohorts -> "
+            + " | ".join(f"{cols} in {names}" for (cols, _), names in shapes.items())
+        )
+        checked += 1
+    assert checked == len(annotation), f"only {checked} annotation modalities were built"

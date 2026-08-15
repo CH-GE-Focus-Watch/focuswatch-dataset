@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from ..time_axis import sort_stable_by_time, to_unix_ns
@@ -131,7 +132,15 @@ class Ml4scsAdapter:
             "x": raw["x"].astype(float), "y": raw["y"].astype(float),
             "pressure": raw["pressure"].astype(float),
             "tilt_x": raw["tilt_x"].astype(float), "tilt_y": raw["tilt_y"].astype(float),
-            "src_timestamp": raw["timestamp"],
+            # Why (I15): float64 across every cohort - see the note in
+            # sensorlogger._from_session_json. Millisecond magnitudes are exact
+            # in float64, so nothing is lost by not publishing this as int64 in
+            # the cohorts that happen to have it.
+            "src_timestamp": raw["timestamp"].astype(float),
+            # Why (I15): no session-relative offset exists for this cohort - its
+            # recordings are not web-app sessions - but one modality carries one
+            # column set, so the column is present and empty rather than absent.
+            "src_t_session_ms": np.nan,
         })
         return sort_stable_by_time(out)
 
@@ -144,7 +153,15 @@ class Ml4scsAdapter:
         # that a structural fact of this column rather than an accident of
         # whether a given CSV happens to contain a blank cell.
         out["task_index"] = out["task_index"].astype("float64")
-        cols = ["t_ns", "event", "task_id", "task_name", "task_index", "task_category", "protocol_id"]
+        # Why (I15): this cohort's marker CSV carries no source payload and no
+        # session-relative offset, but one modality must present one column set
+        # - a reuser concatenating the cohorts otherwise gets a ragged frame,
+        # and the package descriptor cannot state a single schema for markers.
+        # Present and empty, not absent.
+        out["src_payload"] = ""
+        out["src_t_session_ms"] = np.nan
+        cols = ["t_ns", "event", "task_id", "task_name", "task_index", "task_category",
+                "protocol_id", "src_payload", "src_t_session_ms"]
         return sort_stable_by_time(out[cols])
 
 

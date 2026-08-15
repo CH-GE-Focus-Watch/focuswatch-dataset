@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 
 import numpy as np
@@ -71,9 +72,20 @@ def write_fixture(root, sid="T6", n=3000):
         "force": [400, 410, 405, 0, np.nan, 402], "created_at": "2026-06-04",
     }).to_csv(d / "pen_events.csv", index=False)
 
+    # Why (C5/I9): the real session_start payload, verbatim in shape - this
+    # export carries the same browser fingerprint fields as the SensorLogger
+    # one, and a fixture of "{}" could not tell a redacting adapter from a
+    # passthrough one.
+    start_payload = json.dumps({
+        "mode": "free", "notes": "", "screen": {"h": 956, "w": 1470, "dpr": 2},
+        "pen_name": "LAMY_safari", "handedness": "right",
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/148.0.0.0",
+        "phase_count": 1, "operator_mode": False, "participant_id": sid,
+        "session_number": 1, "time_origin_ms": T0, "pen_connected_at_start": True,
+    })
     pd.DataFrame({
         "id": [0, 1], "session_id": sid, "t_ms": [t[0], t[-1]], "t_session_ms": [0.0, 6000.0],
-        "event_type": ["session_start", "session_end"], "payload": ["{}", "{}"],
+        "event_type": ["session_start", "session_end"], "payload": [start_payload, "{}"],
         "created_at": "2026-06-04",
     }).to_csv(d / "events.csv", index=False)
 
@@ -218,3 +230,40 @@ def test_importing_the_adapters_package_registers_ege():
                 sys.modules[name] = mod
             else:
                 sys.modules.pop(name, None)
+
+
+def test_marker_payloads_are_allow_listed_here_too(tmp_path):
+    """C5 was applied to the SensorLogger adapter alone, and this export carries
+    the same session_start payload - so `user_agent` and `screen` stayed in the
+    published Ege markers. Both ETH pipelines now share one allow-list.
+    """
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    blob = " ".join(bundle.tables["markers"]["src_payload"].astype(str))
+
+    for banned in ("user_agent", "Mozilla", "screen", "notes"):
+        assert banned not in blob, f"{banned} reached the published markers"
+    assert "handedness" in blob and "participant_id" in blob
+    # user_agent, screen, notes - the three excluded keys, counted so a future
+    # export's new field is visible rather than silently discarded.
+    assert bundle.meta["src_payload_dropped_key_count"] == 3
+
+
+def test_handedness_is_read_from_the_session_payload(tmp_path):
+    """The covariate is stated in events.csv's payload and was published as
+    "unknown" for both Ege recordings while SensorLogger's carried it."""
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    assert a.load(a.discover(tmp_path)[0]).meta["handedness"] == "right"
+
+
+def test_markers_carry_one_column_set_across_both_source_files(tmp_path):
+    """I15: session events come from events.csv and pen_paper_info from
+    pen_events.csv, which has no payload column. Concatenating the two used to
+    leave `src_payload` NaN on half the rows of one table."""
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    mk = a.load(a.discover(tmp_path)[0]).tables["markers"]
+    assert "src_payload" in mk.columns
+    assert mk["src_payload"].notna().all()

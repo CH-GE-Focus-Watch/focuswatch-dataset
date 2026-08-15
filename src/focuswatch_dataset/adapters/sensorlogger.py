@@ -20,6 +20,7 @@ import pandas as pd
 from .. import schema as S
 from ..time_axis import sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
+from .eth_web import handedness_from_payload, redact_payload
 
 COHORT = "ETH-SL"
 
@@ -233,30 +234,16 @@ class SensorLoggerAdapter:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
         return json.loads(candidates[0].read_text())
 
-    @staticmethod
-    def _redact_payload(payload: dict) -> tuple[dict, int]:
-        """Drop any payload key outside the reviewed allow-list (C5).
-
-        Returns the redacted dict AND the number of keys dropped, so the
-        caller can accumulate a total and report it - an unknown key must be
-        visible, not silently absorbed, so a future export's new field gets
-        noticed rather than published unreviewed by default.
-        """
-        allowed = {k: v for k, v in payload.items() if k in S.MARKER_PAYLOAD_ALLOWED_KEYS}
-        return allowed, len(payload) - len(allowed)
+    # Why (C5): the redaction rule and the handedness lookup live in eth_web
+    # because BOTH ETH pipelines export this payload. Keeping a private copy
+    # here is what let the Ege markers keep publishing `user_agent` after these
+    # were cleaned.
+    _redact_payload = staticmethod(redact_payload)
 
     @staticmethod
     def _handedness(events: list[dict]) -> str:
         start = SensorLoggerAdapter._find_event(events, "session_start")
-        value = (start or {}).get("payload", {}).get("handedness")
-        if value is None:
-            return "unknown"
-        value = str(value).strip().lower()
-        if value not in S.HANDEDNESS_VALUES:
-            raise ValueError(
-                f"unrecognised handedness value {value!r}; expected one of {S.HANDEDNESS_VALUES}"
-            )
-        return value
+        return handedness_from_payload((start or {}).get("payload", {}))
 
     def _from_session_json(
         self, d: Path
@@ -313,13 +300,26 @@ class SensorLoggerAdapter:
                 "dot_type": [dot_types[e["event"]] for e in strokes],
                 "x": [e["payload"].get("x", np.nan) for e in strokes],
                 "y": [e["payload"].get("y", np.nan) for e in strokes],
-                "pressure": [e["payload"].get("force", np.nan) for e in strokes],
+                # Why (I15): float64 even though this source states whole
+                # numbers. Pressure and tilt are physical quantities, and a
+                # cohort whose values happen to be integers must not publish a
+                # different dtype for the same column. src_timestamp is
+                # millisecond-magnitude, far inside float64's exact range.
+                "pressure": np.array([e["payload"].get("force", np.nan)
+                                      for e in strokes], dtype=float),
                 # Why (C3): generation A carries no tilt and no pen-device
                 # clock (open question 4) - NaN here is honest, not a bug.
-                "tilt_x": [e["payload"].get("tilt", {}).get("x", np.nan) for e in strokes],
-                "tilt_y": [e["payload"].get("tilt", {}).get("y", np.nan) for e in strokes],
+                "tilt_x": np.array([e["payload"].get("tilt", {}).get("x", np.nan)
+                                    for e in strokes], dtype=float),
+                "tilt_y": np.array([e["payload"].get("tilt", {}).get("y", np.nan)
+                                    for e in strokes], dtype=float),
                 # Why: the pen's own clock, roughly 749 days behind wall clock. Metadata only.
-                "src_timestamp": [e["payload"].get("timestamp", np.nan) for e in strokes],
+                "src_timestamp": np.array([e["payload"].get("timestamp", np.nan)
+                                           for e in strokes], dtype=float),
+                # Why (I15): the session-relative offset the Ege export also
+                # publishes - one column set per modality, so it is present here
+                # rather than leaving that cohort's pen tables a different shape.
+                "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in strokes],
             }))
 
         others = [e for e in all_events if e["event"] not in dot_types]

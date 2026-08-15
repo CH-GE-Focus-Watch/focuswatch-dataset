@@ -5,6 +5,7 @@ columns named g* hold the gyroscope. Both are asserted, not assumed.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ from .. import schema as S
 from ..physics import norm_stats, still_mask
 from ..time_axis import median_rate_hz, sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
+from .eth_web import handedness_from_payload, redact_payload_json
 
 COHORT = "ETH-EGE"
 
@@ -51,7 +53,8 @@ class EgeAdapter:
             if stroke_table is not None:
                 tables["pen"] = stroke_table
         events = d / "events.csv"
-        session_markers = self._markers(events) if events.exists() else None
+        session_markers, dropped_keys, handedness = (
+            self._markers(events) if events.exists() else (None, 0, "unknown"))
         # Why (C3/I8): pen_paper_info and pen_session_sync carry no position,
         # so neither belongs in pen/ - both route to markers/ instead,
         # matching what the SensorLogger adapter already does with
@@ -80,6 +83,11 @@ class EgeAdapter:
             # nothing of it, rather than exempting headimu wholesale.
             "has_head_gyro": "headimu" in tables and "gyro_x" in tables["headimu"].columns,
             "accel_semantics": "total",
+            # Why (C5/I9): read from the same session_start payload the
+            # SensorLogger adapter reads it from, so both ETH pipelines publish
+            # the covariate rather than only one of them.
+            "handedness": handedness,
+            "src_payload_dropped_key_count": dropped_keys,
             # Established by a still-window test on the real corpus: the norm sits at
             # 0.9954 (T6) / 0.9932 (T7), a persistent per-device bias. A recombination
             # of userAcceleration and gravity would sit at exactly 1.000.
@@ -162,6 +170,12 @@ class EgeAdapter:
                 "dot_type": strokes["type"].map(S.PEN_EVENTS_GEN_A).to_numpy(),
                 "x": strokes["x"].astype(float).to_numpy(), "y": strokes["y"].astype(float).to_numpy(),
                 "pressure": strokes["force"].astype(float).to_numpy(),
+                # Why (C3/I15): generation A has no tilt sensor data and no
+                # pen-device clock, but the OTHER generation-A source (the
+                # SensorLogger export) already emits these as NaN - two shapes
+                # for one export generation is the drift C3 set out to remove.
+                # Empty here, not absent.
+                "tilt_x": np.nan, "tilt_y": np.nan, "src_timestamp": np.nan,
                 "src_t_session_ms": strokes["t_session_ms"].to_numpy(),
             })
             if pen["dot_type"].isna().any():
@@ -176,12 +190,27 @@ class EgeAdapter:
                 "event": non_stroke["type"].astype(str),
                 "task_id": "", "task_name": "", "task_index": np.nan,
                 "task_category": "", "protocol_id": "eth_web",
+                # Why (I15): these rows come from pen_events.csv, which has no
+                # payload column - but one modality must carry one column set,
+                # so the column exists here and is empty rather than absent.
+                "src_payload": "",
                 "src_t_session_ms": non_stroke["t_session_ms"].to_numpy(),
             }))
         return pen, markers
 
-    def _markers(self, path: Path) -> pd.DataFrame:
+    def _markers(self, path: Path) -> tuple[pd.DataFrame, int, str]:
         raw = pd.read_csv(path)
+        # Why (C5): this export carries the same session_start payload as the
+        # SensorLogger one - `user_agent` and `screen` included - so it needs the
+        # same allow-list. Cleaning only one adapter left the fingerprint in the
+        # published Ege markers.
+        redacted = [redact_payload_json(v) for v in raw.get("payload", pd.Series([""] * len(raw)))]
+        handedness = "unknown"
+        starts = raw.index[raw["event_type"].astype(str) == "session_start"]
+        if len(starts):
+            payload = raw.get("payload", pd.Series([""] * len(raw))).iloc[starts[0]]
+            if isinstance(payload, str) and payload.strip():
+                handedness = handedness_from_payload(json.loads(payload))
         out = pd.DataFrame({
             "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
             "event": raw["event_type"].astype(str),
@@ -190,13 +219,13 @@ class EgeAdapter:
             # `task_index >= 0`; NaN cannot be mistaken for one.
             "task_id": "", "task_name": "", "task_index": np.nan,
             "task_category": "", "protocol_id": "eth_web",
-            "src_payload": raw.get("payload", ""),
+            "src_payload": [p for p, _ in redacted],
             # Why: t_session_ms is a fixed column of events.csv in the documented
             # source schema; its absence means the format changed and that must
             # fail loudly here, not degrade to a silent None in the output.
             "src_t_session_ms": raw["t_session_ms"],
         })
-        return sort_stable_by_time(out)
+        return sort_stable_by_time(out), sum(n for _, n in redacted), handedness
 
 
 register(EgeAdapter())
