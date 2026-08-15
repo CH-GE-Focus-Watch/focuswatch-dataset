@@ -294,6 +294,23 @@ Eine Zeile pro `(recording_id, modality, column)`: `quantity`, `unit`,
 `semantics`, `frame`, `sample_rate_hz`, `unit_conversion_factor`. Das ist das
 BIDS-`channels.tsv`-Muster, flach gehalten. ~1.000 Zeilen.
 
+`unit` benutzt ein geschlossenes, einheitlich angewendetes Vokabular über
+alle nicht-physikalischen Spalten hinweg (physikalische Größen tragen ihre
+SI-nahe Einheit aus `schema.UNITS`, z. B. `g`, `rad/s`):
+
+| Wert | Bedeutung |
+|---|---|
+| `category` | einer aus einer festen, aufgezählten Menge von Strings |
+| `ordinal` | Position eines Elements in einer Sequenz, keine Magnitude (z. B. `task_index`) |
+| `device_native` | Rohwert in der Skala der Quelle selbst; für Pen-`x`/`y`/`pressure` steht die tatsächliche Einheit zusätzlich pro Recording im Manifest (`pen_xy_unit`/`pen_pressure_scale` — Moleskine-Ncode-Raster und ETH-Web-App-Pixel/-Force sind unterschiedliche Skalen unter demselben Spaltennamen) |
+| `source_native` | `src_`-Provenienz-Spalte: der unveränderte Wert des Quellgeräts, nur zur Nachvollziehbarkeit erhalten, nie neu interpretiert |
+| `n/a` | keine physikalische oder Quell-Einheit anwendbar (z. B. eine kategoriale ID) |
+
+`device_native` und `source_native` klingen ähnlich, meinen aber
+Verschiedenes: Ersteres ist eine echte Quell-Messskala (mit dokumentierter
+Referenz im Manifest), Letzteres ist reine Audit-Provenienz ohne eigenen
+fachlichen Wert.
+
 ## 7. Manifest (`sessions.parquet`)
 
 Alle Flags leben ausschließlich hier. Die Parquet-Dateien tragen in ihren
@@ -305,10 +322,12 @@ Manifest — es gibt keinen zweiten, unabhängig gepflegten Ort.
 | Identität | `recording_id`, `participant_id`, `cohort`, `pipeline` |
 | Modalitäten | `has_watch`, `has_watch_rawaccel`, `has_headimu`, `has_pen`, `has_markers`, `has_attention` |
 | Watch-Capabilities | `watch_hz_nominal`, `watch_hz_measured`, `has_gravity`, `has_quaternion`, `accel_semantics`, `accel_calibration`, `accel_still_bias`, `gravity_source` |
-| Head-Capabilities | `head_hz_nominal`, `head_hz_measured`, `has_head_gravity`, `has_head_quaternion` |
+| Head-Capabilities | `head_hz_nominal`, `head_hz_measured`, `has_head_gravity`, `has_head_quaternion`, `has_head_gyro` |
 | | *Die Head-Rate schwankt stark und darf nicht deklariert, sondern muss gemessen werden: Ege T6 125 Hz (Median-Δt 8 ms), T7 62,5 Hz (16 ms), AirPods ~25 Hz.* |
+| | *`has_head_gyro` ist ein DATEN-Fakt, keine strukturelle Eigenschaft von `headimu`: SensorLogger und AirPods führen ein Kopf-Gyroskop (bei AirPods das einzige Bewegungssignal überhaupt), Ege nicht.* |
 | Zeit | `time_domain`, `time_alignment`, `t_start_ns`, `t_end_ns`, `duration_s` |
 | Protokoll | `protocol_id`, `study_mode`, `subject_index`, `n_writing_tasks`, `n_idle_tasks` |
+| | *`n_writing_tasks`/`n_idle_tasks` sind ML4SCS-skopiert — nur `adapters/ml4scs.py`s Markers tragen eine echte `task_category`-Taxonomie (`writing`/`idle`). Ege und SensorLogger schreiben ein reines Session-Event-Log ohne Task-Kategorie, dort steht `None` (nicht `0` — ein `0` würde fälschlich „Protokoll ohne Schreib-Tasks" statt „Taxonomie nicht anwendbar" bedeuten).* |
 | Träger-Kontext | `watch_wrist_side` ∈ {`left`, `right`, `unknown`} |
 | Pen | `pen_xy_unit`, `pen_pressure_scale`, `pen_delta_s`, `pen_delta_sigma`, `delta_applied` (immer `false`), `alignment_note` |
 | Qualität | `n_samples_watch`, `n_samples_pen`, `n_samples_head`, `issue_codes` |

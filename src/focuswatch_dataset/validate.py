@@ -250,11 +250,25 @@ _MOTION_REQUIRED_CHECKS = {
     "has_headimu": _MOTION_CHECKS_NO_GYRO,
     "has_watch_rawaccel": _MOTION_CHECKS_NO_GYRO,
 }
-_MODALITY_FLAGS = {
-    "has_watch": "watch", "has_watch_rawaccel": "watch_rawaccel", "has_headimu": "headimu",
-    "has_pen": "pen", "has_markers": "markers", "has_attention": "attention",
-}
+# Why: S.MODALITY_FLAGS is the single source for which modality a
+# has_<modality> flag gates - manifest.py's structural derivation reads the
+# same table (via S.CAPABILITY_FLAG_MODALITY, which extends it), so a flag
+# gated here can never silently fall out of sync with what build_manifest
+# actually derives from the tables.
+_MODALITY_FLAGS = S.MODALITY_FLAGS
 _MOTION_MODALITY_FLAGS = ("has_watch", "has_headimu", "has_watch_rawaccel")
+# Capability sub-flags (a property *within* a modality, not the modality's
+# own presence) and the single physical check each gates. The modality each
+# flag maps to comes from S.CAPABILITY_FLAG_MODALITY below, not restated here
+# - has_quaternion's extra OR-requirement (quat_gravity_agreement vs
+# quat_still_agreement) is handled separately, right after this loop.
+_CAPABILITY_CHECKS = (
+    ("has_gravity", "gravity_norm"),
+    ("has_quaternion", "quat_norm"),
+    ("has_head_gravity", "gravity_norm"),
+    ("has_head_quaternion", "quat_norm"),
+    ("has_head_gyro", "gyro_range"),
+)
 
 
 def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]:
@@ -284,22 +298,17 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
 
         # Why: has_gravity/has_quaternion are the Watch-Capabilities fields
         # (docs/DESIGN.md) and describe the watch/ stream specifically;
-        # has_head_gravity/has_head_quaternion are the separate
-        # Head-Capabilities pair and describe the headimu stream.
-        if row.get("has_gravity"):
-            require("watch", "gravity_norm", "has_gravity is true")
+        # has_head_gravity/has_head_quaternion/has_head_gyro are the separate
+        # Head-Capabilities trio and describe the headimu stream.
+        for flag, check in _CAPABILITY_CHECKS:
+            if row.get(flag):
+                require(S.CAPABILITY_FLAG_MODALITY[flag], check, f"{flag} is true")
         if row.get("has_quaternion"):
-            require("watch", "quat_norm", "has_quaternion is true")
-            if not ({"quat_gravity_agreement", "quat_still_agreement"} & seen("watch")):
+            modality = S.CAPABILITY_FLAG_MODALITY["has_quaternion"]
+            if not ({"quat_gravity_agreement", "quat_still_agreement"} & seen(modality)):
                 problems.append(
-                    f"{rid}/watch: neither quat_gravity_agreement nor quat_still_agreement ran "
+                    f"{rid}/{modality}: neither quat_gravity_agreement nor quat_still_agreement ran "
                     "(has_quaternion is true)")
-        if row.get("has_head_gravity"):
-            require("headimu", "gravity_norm", "has_head_gravity is true")
-        if row.get("has_head_quaternion"):
-            require("headimu", "quat_norm", "has_head_quaternion is true")
-        if row.get("has_head_gyro"):
-            require("headimu", "gyro_range", "has_head_gyro is true")
         if row.get("has_pen"):
             require("pen", "dot_type_vocabulary", "has_pen is true")
     return problems

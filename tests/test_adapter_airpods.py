@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.airpods import AirPodsAdapter, parse_ground_truth
+from focuswatch_dataset.manifest import build_manifest
 from focuswatch_dataset.validate import check_coverage, validate_motion_table, validate_recording
 
 GT = "0:00 focused\n4:00 distracted\n9:30 focused\n"
@@ -130,10 +131,18 @@ def test_accel_semantics_still_describes_the_single_motion_stream(tmp_path):
 
 
 def test_measured_head_rate_is_reported(tmp_path):
+    """Fix-round-1 item 1: the adapter no longer declares head_hz_measured in
+    meta at all - manifest.build_manifest recomputes it from the headimu
+    table for every source, so an adapter-level value would only ever be
+    either redundant or (if it drifted) a silently-overridden lie. This test
+    moved from asserting bundle.meta to asserting the manifest, matching the
+    new ownership boundary."""
     write_fixture(tmp_path, fs=25.0)
     a = AirPodsAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
-    assert bundle.meta["head_hz_measured"] == pytest.approx(25.0, rel=0.05)
+    assert "head_hz_measured" not in bundle.meta
+    manifest = build_manifest([bundle])
+    assert manifest.iloc[0]["head_hz_measured"] == pytest.approx(25.0, rel=0.05)
 
 
 def test_loaded_headimu_passes_the_validator(tmp_path):

@@ -62,3 +62,22 @@ ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
+
+# Which modality's Finding stream a manifest capability flag gates. The single
+# source both validate.check_coverage (which physical checks a flag requires)
+# and manifest.build_manifest (which flags are recomputed from table/column
+# presence rather than trusted from an adapter's meta) import - so a flag
+# check_coverage gates on can never silently fall out of sync with what
+# build_manifest actually derives, and vice versa. MODALITY_FLAGS is the
+# has_<modality> subset alone (used for the coverage-wide time_magnitude
+# requirement); CAPABILITY_FLAG_MODALITY extends it with the sub-flags that
+# describe a capability *within* a modality (gravity/quaternion/gyro).
+MODALITY_FLAGS: dict[str, str] = {f"has_{m}": m for m in MODALITIES}
+CAPABILITY_FLAG_MODALITY: dict[str, str] = {
+    **MODALITY_FLAGS,
+    "has_gravity": "watch",
+    "has_quaternion": "watch",
+    "has_head_gravity": "headimu",
+    "has_head_quaternion": "headimu",
+    "has_head_gyro": "headimu",
+}

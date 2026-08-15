@@ -123,22 +123,94 @@ def test_manifest_built_from_a_real_bundle_drives_coverage_for_head_gyro():
     assert any("gyro_range" in p and "headimu" in p for p in problems)
 
 
-def test_manifest_carries_a_meta_key_the_column_list_has_never_heard_of():
-    """A future adapter's novel meta key must not be silently dropped.
+def test_head_measured_rate_is_derived_not_copied():
+    """Fix-round-1 item 1: head_hz_measured gets the same guarantee as
+    watch_hz_measured. The fixture's meta claims a nonsense 999.0 Hz; the
+    200-sample, 40ms-spaced headimu table is genuinely 25 Hz. Before this
+    fix, head_hz_measured was excluded from neither _STRUCTURAL_FLAGS nor
+    any equivalent set, so the meta merge silently overwrote the value
+    computed from the real table - this test would have observed 999.0.
+    """
+    b = RecordingBundle(
+        RecordingRef("AIRPODS-P50", "AIRPODS-P50", "AIRPODS", "airpods", Path(".")),
+        {"headimu": pd.DataFrame({
+            "t_ns": np.arange(200, dtype=np.int64) * 40_000_000,
+            **{c: np.zeros(200) for c in S.COLUMNS[S.Quantity.ACCEL_USER]},
+            **{c: np.zeros(200) for c in S.COLUMNS[S.Quantity.GYRO]},
+        })},
+        {"head_hz_nominal": None, "head_hz_measured": 999.0,  # deliberately wrong
+         "accel_semantics": "user", "accel_calibration": "fused", "gravity_source": "none",
+         "time_domain": "device_wall_clock", "time_alignment": "shared_clock",
+         "protocol_id": "airpods_attention"},
+    )
+    m = build_manifest([b]).iloc[0]
+    assert m["head_hz_measured"] == pytest.approx(25.0)
 
-    MANIFEST_COLUMNS is a hand-maintained list; it can lag the adapters that
-    populate a bundle's meta. build_manifest must still surface any key an
-    adapter actually emits, or that key's information (here modelling a
-    hypothetical future flag) is lost without any test noticing - the same
-    failure shape as the AirPods has_head_gyro omission, just one layer
-    earlier (in the manifest builder itself, not in a hand-built test
-    fixture).
+
+# --- Finding 3 (fix round 1): unknown meta keys must be classified, not silently included ---
+
+def test_unclassified_meta_key_fails_the_build_loudly():
+    """A brand-new adapter meta key that is neither in MANIFEST_COLUMNS nor
+    _INTERNAL_META_KEYS must raise, not silently leak into the publication
+    (the pre-fix-round-1 behaviour) or silently vanish from it (the
+    original brief's df[list(MANIFEST_COLUMNS)] bug). A deliberate
+    MANIFEST_COLUMNS-or-_INTERNAL_META_KEYS decision is the only way through.
     """
     b = bundle(has_never_before_seen_flag=True)
-    m = build_manifest([b])
     assert "has_never_before_seen_flag" not in MANIFEST_COLUMNS
-    assert "has_never_before_seen_flag" in m.columns
-    assert bool(m.iloc[0]["has_never_before_seen_flag"]) is True
+    with pytest.raises(ValueError, match="has_never_before_seen_flag"):
+        build_manifest([b])
+
+
+def test_internal_meta_key_does_not_appear_in_the_published_manifest():
+    """session_start_ns is real (every adapter sets it, for the spill guard)
+    and legitimately internal - it must build without raising, but must not
+    occupy a column in the published manifest.
+    """
+    b = bundle(session_start_ns=1_780_000_000_000_000_000)
+    m = build_manifest([b])
+    assert "session_start_ns" not in m.columns
+
+
+# --- Fix round 1, item 5: n_writing_tasks/n_idle_tasks ---
+
+def _markers(instances: list[tuple[str, str]]) -> pd.DataFrame:
+    """One task_start + task_end pair per (task_id, task_category) instance."""
+    rows = []
+    for i, (task_id, category) in enumerate(instances):
+        for event in ("task_start", "task_end"):
+            rows.append({"t_ns": i, "event": event, "task_id": task_id, "task_name": task_id,
+                        "task_index": i, "task_category": category, "protocol_id": "v2"})
+    return pd.DataFrame(rows)
+
+
+def test_task_counts_come_from_ml4scs_style_markers():
+    b = bundle()
+    b.tables["markers"] = _markers([("abschreiben", "writing"), ("math", "writing"),
+                                    ("pause1", "idle"), ("pause2", "idle"), ("pause3", "idle")])
+    m = build_manifest([b]).iloc[0]
+    assert m["n_writing_tasks"] == 2
+    assert m["n_idle_tasks"] == 3
+
+
+def test_task_counts_are_none_not_zero_for_an_untaxonomised_markers_table():
+    """ege.py/sensorlogger.py's markers tables are a session-event stream with
+    task_category always "" - a real fact this cohort's protocol has no task
+    taxonomy, not "zero writing tasks happened". None, not 0, must come out.
+    """
+    b = bundle()
+    b.tables["markers"] = _markers([("pen_session_sync", ""), ("pen_paper_info", "")])
+    m = build_manifest([b]).iloc[0]
+    assert m["n_writing_tasks"] is None or (isinstance(m["n_writing_tasks"], float)
+                                            and np.isnan(m["n_writing_tasks"]))
+    assert m["n_idle_tasks"] is None or (isinstance(m["n_idle_tasks"], float)
+                                         and np.isnan(m["n_idle_tasks"]))
+
+
+def test_task_counts_are_none_with_no_markers_table_at_all():
+    m = build_manifest([_head_bundle()]).iloc[0]  # AirPods-shaped: no markers table
+    assert m["n_writing_tasks"] is None or (isinstance(m["n_writing_tasks"], float)
+                                            and np.isnan(m["n_writing_tasks"]))
 
 
 # --- Finding 2: None must survive the DataFrame round trip ---

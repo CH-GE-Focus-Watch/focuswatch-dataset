@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from .. import schema as S
-from ..time_axis import median_rate_hz, parse_iso_to_unix_ns, sort_stable_by_time
+from ..time_axis import parse_iso_to_unix_ns, sort_stable_by_time
 from .base import RecordingBundle, RecordingRef, register
 
 # Why: this cohort's own participant ids (P1..P26) collide with ML4SCS's;
@@ -125,8 +125,11 @@ class AirPodsAdapter:
             # rate itself varies recording to recording - declaring a nominal
             # value would fabricate a fact the source doesn't carry. The
             # validator falls back to the measured rate when this is None.
+            # head_hz_measured is NOT declared here - manifest.build_manifest
+            # recomputes it from the headimu table itself (same treatment as
+            # watch_hz_measured), so a value asserted here would only ever be
+            # dead weight at best or a silently-overridden lie at worst.
             "head_hz_nominal": None,
-            "head_hz_measured": round(median_rate_hz(head["t_ns"].to_numpy(dtype=np.int64)), 3),
             "time_domain": "device_wall_clock",
             "time_alignment": "shared_clock",
             "protocol_id": "airpods_attention",

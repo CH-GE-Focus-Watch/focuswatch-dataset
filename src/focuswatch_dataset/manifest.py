@@ -3,26 +3,40 @@
 Parquet key-value metadata and any downstream descriptor are generated from
 it; nothing else is maintained independently.
 
-Two guarantees this module exists to provide:
+Three guarantees this module exists to provide:
 
 1. Capability flags cannot silently drop out of the built manifest. The
    modality/gravity/quaternion/gyro booleans that `check_coverage` gates on
    are recomputed here directly from `bundle.tables` column presence -
    never merely trusted from an adapter's own `meta` dict, which could in
-   principle disagree with the data it describes. Every other field an
-   adapter puts in `meta` still reaches the manifest even if a future
-   adapter introduces a key `MANIFEST_COLUMNS` has not been told about yet
-   (see `build_manifest`'s column union at the end) - a hand-maintained
-   column list can drift from the adapters that actually populate it, and
-   the failure mode of that drift is a check that quietly never ran.
-2. Optional numeric fields (`watch_hz_nominal`, `head_hz_nominal`) survive
-   the round trip through a `pandas.DataFrame`. A `None` in an all-numeric
-   column becomes `NaN` on the way out, and `NaN` is truthy in Python - a
-   naive `if nominal_hz:` downstream would treat "no nominal rate declared"
-   as if a rate of 0 divided into it. `check_manifest_consistency` and every
-   accessor in this module read those fields with `pandas.notna`, and
-   `validate.validate_motion_table` was fixed to do the same (see that
-   module's history).
+   principle disagree with the data it describes. Which flags these are
+   comes from `schema.CAPABILITY_FLAG_MODALITY`, the same table
+   `validate.check_coverage` reads its modality bindings from - so a flag
+   `check_coverage` starts gating on can never silently fall out of sync
+   with what this module derives from the tables (see `_DERIVED_FIELDS`).
+   The two measured-rate fields (`watch_hz_measured`, `head_hz_measured`)
+   get the identical treatment for the identical reason, even though they
+   are not booleans.
+2. Every `bundle.meta` key is either published (`MANIFEST_COLUMNS`),
+   deliberately kept internal (`_INTERNAL_META_KEYS`, e.g. the
+   spill-guard-only `session_start_ns`), or fails the build loudly. A
+   hand-maintained column list can drift from the adapters that actually
+   populate it; the old failure mode of that drift was `df[list(
+   MANIFEST_COLUMNS)]` silently dropping an unlisted key (this project's
+   own `has_head_gyro` very nearly shipped that way). The fix is not to
+   swing the other way and publish every unknown key unexamined either -
+   that would leak internal-only bookkeeping (a spill-guard timestamp with
+   no declared unit or purpose) into the published dataset. Only a
+   classified key gets through, one way or the other; an unclassified one
+   raises.
+3. Optional numeric fields (`watch_hz_nominal`, `head_hz_nominal`,
+   `n_writing_tasks`, `n_idle_tasks`) survive the round trip through a
+   `pandas.DataFrame`. A `None` in an all-numeric column becomes `NaN` on
+   the way out, and `NaN` is truthy in Python - a naive `if nominal_hz:`
+   downstream would treat "not applicable" as if a real value divided into
+   it. `check_manifest_consistency` and every accessor in this module read
+   those fields with `pandas.notna`, and `validate.validate_motion_table`
+   was fixed to do the same (see that module's history).
 """
 from __future__ import annotations
 
@@ -42,7 +56,7 @@ MANIFEST_COLUMNS = (
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
     "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
-    "protocol_id", "study_mode", "subject_index",
+    "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
     "watch_wrist_side",
     "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
     "delta_applied", "alignment_note",
@@ -50,17 +64,27 @@ MANIFEST_COLUMNS = (
     "source_pipeline", "schema_version", "redaction_policy", "build_git_sha",
 )
 
-# Why: these are the flags check_coverage gates required physical checks on
-# (validate.py's _MOTION_MODALITY_FLAGS / _MODALITY_FLAGS / the has_head_*
-# trio). Recomputing them from table/column presence here - rather than
+# Meta keys that are legitimate for an adapter to emit but are never
+# published: internal bookkeeping consumed elsewhere in the pipeline before
+# the manifest is built (session_start_ns feeds validate_recording's spill
+# guard; src_standardisation is SensorLogger's own audit trail for the unit
+# harmonisation it already applied). A key that is neither published nor
+# listed here fails the build loudly - see build_manifest.
+_INTERNAL_META_KEYS = frozenset({"session_start_ns", "src_standardisation"})
+
+# Why: these are the flags check_coverage gates required physical checks on -
+# schema.CAPABILITY_FLAG_MODALITY is the single table both modules read them
+# from. Recomputing them from table/column presence here - rather than
 # trusting whatever an adapter's meta dict says - is what makes "the flag an
 # adapter forgot to set" structurally impossible rather than merely tested
-# per-adapter. Excluded from the meta merge below so a stale or missing meta
-# value can never override the structural truth.
-_STRUCTURAL_FLAGS = frozenset(
-    {f"has_{m}" for m in S.MODALITIES}
-    | {"has_gravity", "has_quaternion", "has_head_gravity", "has_head_quaternion", "has_head_gyro"}
-)
+# per-adapter. The two measured-rate fields get the same treatment: they are
+# derived from the same tables the structural flags are, so they are excluded
+# from the meta merge alongside them, even though they are not gated by
+# check_coverage and so are not part of the shared flag/modality table.
+_STRUCTURAL_FLAGS = frozenset(S.CAPABILITY_FLAG_MODALITY)
+_DERIVED_MEASURED_FIELDS = frozenset({"watch_hz_measured", "head_hz_measured"})
+_DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
+_DERIVED_FIELDS = _STRUCTURAL_FLAGS | _DERIVED_MEASURED_FIELDS | _DERIVED_TASK_COUNT_FIELDS
 
 _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "delta_applied": False,
@@ -69,6 +93,7 @@ _DEFAULTS: dict[str, object] = {
     "build_git_sha": "", "subject_index": -1, "study_mode": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
     "head_hz_nominal": np.nan, "head_hz_measured": np.nan,
+    "n_writing_tasks": None, "n_idle_tasks": None,
     "pen_xy_unit": "", "pen_pressure_scale": "",
     "accel_semantics": "", "accel_calibration": "", "gravity_source": "none",
     "time_domain": "", "time_alignment": "", "protocol_id": "",
@@ -100,6 +125,27 @@ def _rate(df: pd.DataFrame | None) -> float:
     return round(hz, 3) if np.isfinite(hz) else np.nan
 
 
+def _task_counts(markers: pd.DataFrame | None) -> tuple[int | None, int | None]:
+    """Count distinct writing/idle task instances from the markers table.
+
+    Each task instance writes one `task_start` and one `task_end` row
+    sharing a `task_category`; counting `task_start` rows avoids double
+    counting. Only ml4scs.py populates `task_category` with real values
+    (`writing`/`idle`, per Study Mode's protocol taxonomy) - ege.py and
+    sensorlogger.py's markers tables are a plain session-event stream and
+    always write `""`. Returns `(None, None)`, not `(0, 0)`, when no task
+    taxonomy is present at all: a 0 would misread as "this recording had a
+    protocol with zero writing tasks", which is false: it is a recording
+    whose source never had a task-labelled protocol in the first place.
+    """
+    if markers is None or not len(markers) or "task_category" not in markers.columns:
+        return None, None
+    cats = markers.loc[markers.get("event") == "task_start", "task_category"]
+    if not (cats.astype(str) != "").any():
+        return None, None
+    return int((cats == "writing").sum()), int((cats == "idle").sum())
+
+
 def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
     rows = []
     for b in bundles:
@@ -129,58 +175,96 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
             row["has_head_gravity"] = "gravity_x" in head.columns
             row["has_head_quaternion"] = "quat_x" in head.columns
             row["has_head_gyro"] = "gyro_x" in head.columns
+        row["n_writing_tasks"], row["n_idle_tasks"] = _task_counts(b.tables.get("markers"))
 
-        # Everything else the adapter declared - including keys this module's
-        # own MANIFEST_COLUMNS list has never heard of; see the column union
-        # below. Structural flags are excluded so a redundant (and always
-        # consistent, in every adapter today) meta declaration can never
-        # override the value just derived from the actual tables.
-        row.update({k: v for k, v in b.meta.items() if k not in _STRUCTURAL_FLAGS})
+        # Everything else the adapter declared, excluding the fields just
+        # derived above (a redundant meta declaration - today always
+        # consistent - can never override the value derived from the actual
+        # tables) and the internal-only keys classified in
+        # _INTERNAL_META_KEYS (excluded here so they never occupy a manifest
+        # column at all - see the loud-failure check below for why an
+        # unclassified key is not simply dropped the same way).
+        row.update({
+            k: v for k, v in b.meta.items()
+            if k not in _DERIVED_FIELDS and k not in _INTERNAL_META_KEYS
+        })
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    # Why: union, not `df[list(MANIFEST_COLUMNS)]` - the latter silently drops
-    # any meta key this list has not been updated for. Declared columns first
-    # for a stable, readable layout; anything extra sorted after them.
-    ordered = list(MANIFEST_COLUMNS) + sorted(c for c in df.columns if c not in MANIFEST_COLUMNS)
-    for c in ordered:
+    # Why: a column that is neither declared nor explicitly internal is not
+    # silently published (the old df[list(MANIFEST_COLUMNS)] bug this module
+    # exists to prevent) NOR silently dropped (the opposite failure - an
+    # unexamined new flag would then never reach check_coverage either).
+    # Fails the build loudly instead, so a new adapter meta key forces a
+    # deliberate MANIFEST_COLUMNS-or-_INTERNAL_META_KEYS decision.
+    unclassified = sorted(c for c in df.columns if c not in MANIFEST_COLUMNS
+                          and c not in _INTERNAL_META_KEYS)
+    if unclassified:
+        raise ValueError(
+            f"unclassified manifest column(s) {unclassified}: add to MANIFEST_COLUMNS to "
+            "publish them, or to _INTERNAL_META_KEYS to keep them internal-only"
+        )
+    for c in MANIFEST_COLUMNS:
         if c not in df.columns:
             df[c] = _DEFAULTS.get(c, np.nan)
-    return df[ordered]
+    return df[list(MANIFEST_COLUMNS)]
 
 
 _TIME_COLUMNS = {S.TIME_COLUMN, "t_start_ns", "t_end_ns"}
 
-# Non-physical signal columns that are not part of a schema.Quantity. Curated
+# Non-physical signal columns whose actual unit is declared per-recording in
+# the manifest, rather than fixed by schema - Moleskine's ncode grid and the
+# ETH web app's own pixel/force scale are genuinely different units for the
+# same column name, so a fixed placeholder would hide real information the
+# manifest already carries. column -> (semantics, manifest meta key holding
+# the actual per-recording unit).
+_PEN_SCALE_COLUMNS: dict[str, tuple[str, str]] = {
+    "x": ("pen_position", "pen_xy_unit"),
+    "y": ("pen_position", "pen_xy_unit"),
+    "pressure": ("pen_pressure", "pen_pressure_scale"),
+}
+
+# Non-physical signal columns with a fixed, source-independent unit. Curated
 # for readability; any column this table has never heard of - including a
 # future one - still gets a non-empty (unit, semantics) from the fallback in
-# _describe_column, so build_channels can never emit a blank cell.
+# _describe_column, so build_channels can never emit a blank cell. Vocabulary
+# glossary (see also docs/DESIGN.md's channels.parquet section):
+#   category  - one of a fixed, enumerated set of string values
+#   ordinal   - the position of an item within a sequence, not a magnitude
+#   device_native - raw values in whatever unit the source stream itself
+#                   uses; look up the per-recording pen_xy_unit/
+#                   pen_pressure_scale manifest fields (or, for tilt, the
+#                   source's own docs) for what that unit actually is
+#   source_native - a src_-prefixed provenance passthrough column: the
+#                   source device's own value, kept for audit, never
+#                   reinterpreted or rescaled
+#   n/a       - no physical or source unit applies (e.g. a categorical id)
 _KNOWN_METADATA_COLUMNS: dict[str, tuple[str, str]] = {
     "dot_type": ("category", "pen_contact_state"),
-    "x": ("device_native", "pen_position"),
-    "y": ("device_native", "pen_position"),
-    "pressure": ("device_native", "pen_pressure"),
     "tilt_x": ("device_native", "pen_tilt"),
     "tilt_y": ("device_native", "pen_tilt"),
     "label": ("category", "attention_state"),
     "event": ("category", "study_event"),
     "task_id": ("category", "study_task_id"),
     "task_name": ("category", "study_task_name"),
-    "task_index": ("count", "study_task_index"),
+    "task_index": ("ordinal", "study_task_index"),
     "task_category": ("category", "study_task_category"),
     "protocol_id": ("category", "study_protocol_id"),
 }
 
 
-def _describe_column(column: str, quantity: S.Quantity | None) -> tuple[str, str, str]:
+def _describe_column(column: str, quantity: S.Quantity | None,
+                     meta: dict[str, object]) -> tuple[str, str, str]:
     """(unit, semantics, frame) for one column - never an empty unit or semantics.
 
     Physical quantities come from schema.UNITS. Time columns (the primary
-    axis and interval endpoints) are nanoseconds. Known non-physical columns
-    (pen/marker/attention metadata) have a hand-picked entry. Anything else -
-    chiefly src_-prefixed provenance passthrough columns, but also any future
-    column no branch above recognises - falls back to an explicit
-    "n/a"/"metadata" pair rather than an empty string.
+    axis and interval endpoints) are nanoseconds. Pen x/y/pressure take their
+    unit from this recording's own manifest declaration (_PEN_SCALE_COLUMNS).
+    Other known non-physical columns (pen tilt, marker/attention metadata)
+    have a hand-picked entry. Anything else - chiefly src_-prefixed
+    provenance passthrough columns, but also any future column no branch
+    above recognises - falls back to an explicit "n/a"/"metadata" pair
+    rather than an empty string.
     """
     if quantity is not None:
         return S.UNITS[quantity], quantity.value, "device"
@@ -188,6 +272,9 @@ def _describe_column(column: str, quantity: S.Quantity | None) -> tuple[str, str
         return "ns", "timestamp", ""
     if column.startswith("src_"):
         return "source_native", "source_provenance", ""
+    if column in _PEN_SCALE_COLUMNS:
+        semantics, meta_key = _PEN_SCALE_COLUMNS[column]
+        return (meta.get(meta_key) or "device_native"), semantics, ""
     unit, semantics = _KNOWN_METADATA_COLUMNS.get(column, ("n/a", "metadata"))
     return unit, semantics, ""
 
@@ -200,7 +287,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
             hz = _rate(df)
             for column in df.columns:
                 q = col_to_quantity.get(column)
-                unit, semantics, frame = _describe_column(column, q)
+                unit, semantics, frame = _describe_column(column, q, b.meta)
                 rows.append({
                     "recording_id": b.ref.recording_id, "modality": modality, "column": column,
                     "quantity": q.value if q else ("time" if column in _TIME_COLUMNS else "other"),
