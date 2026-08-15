@@ -25,7 +25,18 @@ def test_allows_small_source_and_fixtures(tmp_path: Path):
     assert check_paths([ok]) == []
 
 
-@pytest.mark.parametrize("ext", [".csv", ".parquet", ".zip", ".jsonl"])
+def test_small_session_json_is_blocked_by_extension_not_size(tmp_path: Path):
+    """I10: .json was not in BLOCKED_EXTENSIONS - the SensorLogger session
+    export carries pen coordinates, force, tilt and timestamps in exactly
+    this format, and a stroke-free (small) recording slips under the 1 MB
+    size-rule backstop that was the only thing blocking it.
+    """
+    small = tmp_path / "E2_session6.json"
+    small.write_text('{"events": []}')  # well under the 1 MB size rule
+    assert check_paths([small]) != []
+
+
+@pytest.mark.parametrize("ext", [".csv", ".parquet", ".zip", ".jsonl", ".json"])
 def test_blocked_extensions_are_blocked_at_any_size_and_depth(tmp_path: Path, ext: str):
     nested = tmp_path / "a" / "b" / "c"
     nested.mkdir(parents=True)

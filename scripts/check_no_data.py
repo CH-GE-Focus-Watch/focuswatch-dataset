@@ -9,8 +9,13 @@ MAX_BYTES = 1_048_576
 
 # Why: this package never legitimately tracks these formats — fixtures live
 # only under pytest's tmp_path, never committed. A type rule can't lag the
-# corpus the way a denylist of known source filenames would.
-BLOCKED_EXTENSIONS = {".csv", ".parquet", ".zip", ".jsonl"}
+# corpus the way a denylist of known source filenames would. .json is here
+# because the SensorLogger session export carries pen coordinates, force,
+# tilt and timestamps in a *.json file (see adapters/sensorlogger.py) — a
+# stroke-free recording can slip under the 1 MB size-rule backstop if
+# extension alone does not stop it (I10). No repo JSON is tracked today
+# (checked via `git ls-files "*.json"`), so nothing needs an allow-list.
+BLOCKED_EXTENSIONS = {".csv", ".parquet", ".zip", ".jsonl", ".json"}
 
 # Why: .txt is otherwise legitimate (requirements.txt, docs); only these two
 # AirPods ground-truth/protocol filename shapes are capture data.
