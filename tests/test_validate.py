@@ -179,6 +179,26 @@ def test_declared_time_unit_must_match_the_magnitude():
     assert "time_magnitude" in failed_checks(findings)
 
 
+# --- I6: accel_semantics must agree with which accel columns are present -------
+
+def test_accel_semantics_total_requires_accel_total_columns():
+    watch = make_watch(n=200).drop(columns=list(S.COLUMNS[S.Quantity.ACCEL_USER]))
+    watch[list(S.COLUMNS[S.Quantity.ACCEL_TOTAL])] = 1.0
+    findings = validate_recording("R1", {"watch": watch}, {"accel_semantics": "total"})
+    assert "accel_semantics_matches_columns" in {f.check for f in findings if f.passed}
+
+
+def test_accel_semantics_total_fails_when_only_accel_user_columns_are_present():
+    """The mutation this guards against (brief, §I6): ege.py's
+    accel_semantics flipped from "total" to "user" while the table still
+    emits accel_total_* columns - a stale declaration disagreeing with the
+    actual data. Reproduced directly here without touching the adapter.
+    """
+    watch = make_watch(n=200)  # carries accel_user_*, never accel_total_*
+    findings = validate_recording("R1", {"watch": watch}, {"accel_semantics": "total"})
+    assert "accel_semantics_matches_columns" in failed_checks(findings)
+
+
 # --- Coverage matrix -----------------------------------------------------------
 
 def test_coverage_accepts_a_complete_report():

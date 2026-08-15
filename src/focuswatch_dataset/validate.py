@@ -220,6 +220,20 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
             add("spill_guard", modality, round(lag_s, 3),
                 f"no sample more than {S.SPILL_GUARD_S} s before session start",
                 lag_s <= S.SPILL_GUARD_S)
+
+    # I6: accel_semantics must agree with which acceleration columns the
+    # motion table actually carries - "total" implies accel_total_*, "user"
+    # implies accel_user_*. Checked against watch when present, else headimu
+    # (AirPods' only motion stream) - the same modality accel_semantics
+    # describes per DESIGN §7. Makes the column-names-carry-semantics
+    # invariant structural, not just declarative.
+    semantics = meta.get("accel_semantics")
+    quantity = {"total": S.Quantity.ACCEL_TOTAL, "user": S.Quantity.ACCEL_USER}.get(semantics)
+    modality = "watch" if "watch" in tables else ("headimu" if "headimu" in tables else None)
+    if quantity is not None and modality is not None:
+        add("accel_semantics_matches_columns", modality, semantics,
+            f"accel_semantics={semantics!r} implies {quantity.value}_* present",
+            all(c in tables[modality].columns for c in S.COLUMNS[quantity]))
     return out
 
 
