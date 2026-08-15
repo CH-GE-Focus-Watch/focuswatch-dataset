@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.sensorlogger import SensorLoggerAdapter
+from focuswatch_dataset.manifest import build_manifest
 from focuswatch_dataset.validate import (
     check_coverage, validate_motion_table, validate_pen_table, validate_recording,
 )
@@ -258,26 +259,21 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     was actually exercised, which is why the watch_rawaccel/gyro_range and
     headimu/gyro_range gaps went uncaught. Builds a real bundle from the
     existing fixture (watch + headimu + watch_rawaccel + pen + markers, all
-    present) and runs it through the real gate."""
+    present) and runs it through the real gate.
+
+    Why build_manifest(), not a hand-picked dict of flags: a hand-built
+    manifest that forgets to name a flag makes check_coverage silently skip
+    that flag's requirement rather than fail it - this exact class of bug
+    hid a real gap in tests/test_adapter_ege.py's equivalent test
+    (has_head_quaternion, fixed in the same review round as this change).
+    build_manifest derives every flag the same way the real build does, so
+    this test can never again omit one by hand.
+    """
     write_fixture(tmp_path)
     a = SensorLoggerAdapter()
     ref = a.discover(tmp_path)[0]
     bundle = a.load(ref)
-
-    manifest = pd.DataFrame([{
-        "recording_id": ref.recording_id,
-        "has_watch": "watch" in bundle.tables,
-        "has_watch_rawaccel": bundle.meta["has_watch_rawaccel"],
-        "has_headimu": "headimu" in bundle.tables,
-        "has_pen": bundle.meta["has_pen"],
-        "has_markers": "markers" in bundle.tables,
-        "has_attention": "attention" in bundle.tables,
-        "has_gravity": bundle.meta["has_gravity"],
-        "has_quaternion": bundle.meta["has_quaternion"],
-        "has_head_gravity": bundle.meta["has_head_gravity"],
-        "has_head_quaternion": bundle.meta["has_head_quaternion"],
-        "has_head_gyro": bundle.meta["has_head_gyro"],
-    }])
+    manifest = build_manifest([bundle])
 
     findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch",
                                      bundle.meta["watch_hz_nominal"])

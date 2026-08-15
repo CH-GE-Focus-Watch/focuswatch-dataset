@@ -7,6 +7,7 @@ import pytest
 from focuswatch_dataset.build import build_dataset
 from focuswatch_dataset.cli import main
 from focuswatch_dataset.load import load_manifest
+from focuswatch_dataset.manifest import check_manifest_consistency
 from focuswatch_dataset.redact import RedactionPolicy
 from focuswatch_dataset.write import read_table
 
@@ -110,6 +111,34 @@ def test_missing_required_check_aborts_the_build(tmp_path, monkeypatch):
         build_dataset(sources(tmp_path), tmp_path / "out", strict=True)
 
 
+def test_coverage_gap_abort_persists_the_full_gap_list_in_the_report(tmp_path, monkeypatch):
+    """fix round 1, item 2: before this fix, validation_report.json on a
+    coverage-gap abort held only the physical findings (which can all be
+    `passed: true`) - the actual reason for the abort lived solely in the
+    RuntimeError message, truncated to five gaps and never written to disk.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    original = build_mod.validate_motion_table
+
+    def dropped(df, recording_id, modality, nominal_hz):
+        findings = original(df, recording_id, modality, nominal_hz)
+        if modality == "watch":
+            findings = [f for f in findings if f.check != "gyro_range"]
+        return findings
+
+    monkeypatch.setattr(build_mod, "validate_motion_table", dropped)
+    out = tmp_path / "out"
+    with pytest.raises(RuntimeError, match="coverage gap"):
+        build_dataset(sources(tmp_path), out, strict=True)
+
+    findings = json.loads((out / "validation_report.json").read_text())
+    gap_findings = [f for f in findings if f["check"] == "coverage_gap"]
+    assert gap_findings, "the report must not read as if every check passed"
+    assert all(not f["passed"] for f in gap_findings)
+    assert any(f["modality"] == "watch" and "gyro_range" in f["observed"] for f in gap_findings)
+
+
 # --- Order-independence: source_roots dict key order must not matter ------
 
 def test_build_is_order_independent_of_source_dict_key_order(tmp_path):
@@ -149,13 +178,90 @@ def test_recording_load_failure_aborts_without_writing_output(tmp_path, monkeypa
     out = tmp_path / "out"
     with pytest.raises(RuntimeError, match="failed to load recording"):
         build_dataset(sources(tmp_path), out, strict=True)
-    # Why: a build that half-writes and exits zero must be impossible - the
-    # directory may exist (mkdir happens up front) but must carry none of
-    # the publishable artefacts a caller would mistake for a finished build.
-    for f in ("sessions.parquet", "sessions.csv", "channels.parquet",
-              "datapackage.json", "data_dictionary.md", "validation_report.json"):
-        assert not (out / f).exists(), f
-    assert not any(out.rglob("*.parquet"))
+    # Why: a build that half-writes and exits zero must be impossible - this
+    # failure happens before any publishable artefact is written (staging
+    # doesn't get created until every recording has loaded), so `out` must
+    # not exist at all, let alone carry a partial set of files.
+    assert not out.exists()
+
+
+# --- Never half-write into a pre-existing `out` (fix round 1, item 1) -----
+
+def test_rebuild_over_a_previous_build_leaves_no_stale_file(tmp_path):
+    """Re-running into the same --out with a shrunk corpus must not leave a
+    stale <modality>/<old_id>.parquet from the first build lying around next
+    to the new, smaller set - the exact "ordinary iteration, not hand-
+    corruption" scenario fix round 1 named.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    before = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    # Sanity: an AIRPODS-prefixed recording file is actually present before
+    # the shrink - recording_id, not the source name, is what tags the file
+    # (the modality subfolder is named by modality, e.g. attention/, not by
+    # source).
+    assert any("AIRPODS-" in name for name in before)
+
+    shrunk_root = tmp_path / "src2"
+    shrunk_root.mkdir()
+    d = shrunk_root / "ml4scs"
+    d.mkdir()
+    write_ml4scs(d)
+    build_dataset({"ml4scs": d}, out)
+
+    after = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    assert not any("AIRPODS-" in name for name in after)  # every airpods recording file is gone
+    manifest = load_manifest(out)
+    assert set(manifest["cohort"]) == {"ML4SCS"}
+    # No leftover file outside what the new, smaller manifest declares.
+    assert check_manifest_consistency(manifest, out) == []
+
+
+def test_rebuild_into_a_foreign_nonempty_directory_refuses(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "unrelated.txt").write_text("someone else's data")
+    with pytest.raises(RuntimeError, match="refusing to build"):
+        build_dataset(sources(tmp_path), out)
+    # Refused before writing anything - the foreign file is untouched and
+    # nothing new appeared next to it.
+    assert (out / "unrelated.txt").read_text() == "someone else's data"
+    assert list(out.iterdir()) == [out / "unrelated.txt"]
+
+
+def test_write_failure_mid_staging_leaves_out_untouched(tmp_path, monkeypatch):
+    """A crash after some artefacts are already written to the staging
+    directory (write_table succeeded for one bundle, then something breaks)
+    must not promote a partial staging directory into `out`, and must not
+    disturb a previous good `out` either.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+    build_dataset(src, out)
+    before = {p.relative_to(out).as_posix(): (out / p).read_bytes()
+             for p in out.rglob("*") if p.is_file()}
+
+    original = build_mod.write_table
+    calls = {"n": 0}
+
+    def flaky(df, path, recording_id):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("simulated disk failure")
+        return original(df, path, recording_id)
+
+    monkeypatch.setattr(build_mod, "write_table", flaky)
+    with pytest.raises(OSError, match="simulated disk failure"):
+        build_dataset(src, out)
+
+    after = {p.relative_to(out).as_posix(): (out / p).read_bytes()
+             for p in out.rglob("*") if p.is_file()}
+    assert after == before
+    # No leaked staging directory next to `out`.
+    leaked = [p for p in out.parent.iterdir() if p.name.startswith(f".{out.name}.build-")]
+    assert leaked == []
 
 
 # --- redact_bundle actually has a call site --------------------------------
@@ -180,3 +286,39 @@ def test_none_policy_leaves_pen_xy_untouched(tmp_path):
     for rid in pen_rows["recording_id"]:
         pen = read_table(out / "pen" / f"{rid}.parquet")
         assert pen[["x", "y"]].notna().any().any(), rid
+
+
+# --- CLI: fw report (fix round 1, item 4) ----------------------------------
+
+def test_cli_report(tmp_path, capsys):
+    src = sources(tmp_path)
+    out = tmp_path / "out"
+    args = ["build", "--out", str(out)]
+    for name, path in src.items():
+        args += ["--source", f"{name}={path}"]
+    assert main(args) == 0
+    capsys.readouterr()  # discard the build command's own output
+
+    assert main(["report", "--dataset", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert "recordings" in printed
+    assert "participants" in printed
+    for cohort in ("ML4SCS", "ETH", "AIRPODS"):
+        assert cohort in printed
+
+
+def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):
+    from focuswatch_dataset import schema as S
+
+    src = sources(tmp_path)
+    out = tmp_path / "out"
+    args = ["build", "--out", str(out)]
+    for name, path in src.items():
+        args += ["--source", f"{name}={path}"]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(S, "ACCEL_USER_BAND", (0.9, 1.1))
+        rc = main(args)
+    assert rc == 1
+    printed = capsys.readouterr().out
+    assert "build failed" in printed

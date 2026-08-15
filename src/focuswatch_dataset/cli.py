@@ -32,8 +32,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build":
         roots = dict(s.split("=", 1) for s in args.source)
-        report = build_dataset({k: Path(v) for k, v in roots.items()}, Path(args.out),
-                               RedactionPolicy(args.redact), strict=not args.no_strict)
+        try:
+            report = build_dataset({k: Path(v) for k, v in roots.items()}, Path(args.out),
+                                   RedactionPolicy(args.redact), strict=not args.no_strict)
+        except RuntimeError as exc:
+            # Why: a physical-check failure, a coverage gap, a manifest
+            # inconsistency and a load/discovery failure all surface here as
+            # a RuntimeError (see build.py) - this CLI runs in CI, where a
+            # raw traceback is a worse failure report than a message + exit
+            # code, matching the `validate` branch below.
+            print(f"build failed: {exc}")
+            return 1
         print(f"{len(report.findings)} checks, {len(report.failed)} failed")
         return 1 if report.failed else 0
 
