@@ -226,14 +226,20 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
     # implies accel_user_*. Checked against watch when present, else headimu
     # (AirPods' only motion stream) - the same modality accel_semantics
     # describes per DESIGN §7. Makes the column-names-carry-semantics
-    # invariant structural, not just declarative.
+    # invariant structural, not just declarative. Emitted whenever a motion
+    # table exists, regardless of whether `semantics` resolves - an
+    # unrecognised value (empty string, a typo, a future third value) must
+    # fail this finding rather than silently produce none at all (Finding 5,
+    # correction round 1): a skipped check and a passed check are otherwise
+    # indistinguishable, same principle as check_coverage below.
     semantics = meta.get("accel_semantics")
-    quantity = {"total": S.Quantity.ACCEL_TOTAL, "user": S.Quantity.ACCEL_USER}.get(semantics)
+    quantity = S.ACCEL_SEMANTICS_QUANTITY.get(semantics)
     modality = "watch" if "watch" in tables else ("headimu" if "headimu" in tables else None)
-    if quantity is not None and modality is not None:
-        add("accel_semantics_matches_columns", modality, semantics,
-            f"accel_semantics={semantics!r} implies {quantity.value}_* present",
-            all(c in tables[modality].columns for c in S.COLUMNS[quantity]))
+    if modality is not None:
+        add("accel_semantics_matches_columns", modality, semantics or "-",
+            f"accel_semantics must be one of {sorted(S.ACCEL_SEMANTICS_QUANTITY)} and its "
+            "implied accel_total_*/accel_user_* columns must be present",
+            quantity is not None and all(c in tables[modality].columns for c in S.COLUMNS[quantity]))
     return out
 
 

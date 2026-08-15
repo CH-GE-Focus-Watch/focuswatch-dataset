@@ -85,6 +85,30 @@ def test_channels_declare_a_unit_for_every_signal_column():
     assert set(ch[ch["column"] == "accel_user_x"]["unit"]) == {"g"}
 
 
+def test_channels_raises_when_a_modality_has_no_time_domain_declared():
+    """Finding 3 (correction round 1): the missing-domain raise added for C2
+    had no test - deleting it left the full suite green. A bundle whose
+    `time_domain_by_modality` omits an emitted modality (here: watch) must
+    fail loudly rather than publish a table with no declared clock.
+    """
+    b = bundle(time_domain_by_modality={"pen": "server_wall_clock", "markers": "server_wall_clock"})
+    with pytest.raises(ValueError, match="no time_domain_by_modality entry"):
+        build_channels([b])
+
+
+def test_channels_raises_when_a_modality_declares_a_blank_time_domain():
+    """Finding 2 (correction round 1): a present-but-empty-string domain used
+    to pass silently and publish a blank `time_domain` cell in
+    channels.parquet AND sessions.parquet - `not by_modality.get(modality)`
+    catches an empty string the same way it catches a missing key.
+    """
+    b = bundle(time_domain_by_modality={
+        "watch": "", "pen": "server_wall_clock", "markers": "server_wall_clock",
+    })
+    with pytest.raises(ValueError, match="no time_domain_by_modality entry"):
+        build_channels([b])
+
+
 def test_channels_use_the_per_cohort_pen_unit_when_declared():
     """Fix-round-2 item 2: test_channels_declare_a_unit_for_every_signal_column
     uses bundle()'s default meta, which has no pen_xy_unit/pen_pressure_scale

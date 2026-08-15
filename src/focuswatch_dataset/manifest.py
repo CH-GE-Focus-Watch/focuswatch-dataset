@@ -190,7 +190,10 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     """
     if time_alignment != "estimated_delta":
         return ""
-    differing = sorted(m for m, d in by_modality.items() if d and d != primary)
+    # Why: `d != primary`, not `d and d != primary` - a blank domain must
+    # surface as differing (and therefore visible in the note), not be
+    # silently treated as if it agreed with the primary clock.
+    differing = sorted(m for m, d in by_modality.items() if d != primary)
     if not differing:
         return ""
     domains = sorted({by_modality[m] for m in differing})
@@ -361,10 +364,12 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
         for modality, df in b.tables.items():
             hz = _rate(df)
             # Why (C2): time_domain is per-modality, not restated once for the
-            # whole recording - a missing entry is an adapter bug (an emitted
-            # table with no declared clock), not a case to paper over with a
-            # blank cell the way _describe_column refuses to for unit/semantics.
-            if modality not in by_modality:
+            # whole recording - a missing OR blank entry is an adapter bug (an
+            # emitted table with no declared clock), not a case to paper over
+            # with a blank cell the way _describe_column refuses to for
+            # unit/semantics. `not by_modality.get(modality)` catches both the
+            # absent key and an empty-string value the same way.
+            if not by_modality.get(modality):
                 raise ValueError(
                     f"{b.ref.recording_id}/{modality}: no time_domain_by_modality entry - "
                     "the adapter must declare this modality's clock domain"

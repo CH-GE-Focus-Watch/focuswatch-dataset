@@ -110,6 +110,22 @@ def test_standardisation_on_harmonises_acceleration_and_rawaccel_to_g(tmp_path):
     hardcoded `1.0` left 213/213 green under the old suite. This asserts the
     branch that flag actually controls: watch `accel_user_*` and
     `watch_rawaccel`'s `accel_total_*`.
+
+    Correction round 1, Finding 1: also pins the RECORDED
+    unit_conversion_factor via build_channels, not just the harmonised value -
+    the brief's literal C1 mutation (hardcoding the factor returned by
+    `_motion`/`_rawaccel` to 1.0 instead of the true `accel_factor`) leaves the
+    harmonised-norm assertions below unaffected (a prior test run with
+    standardisation=False already showed factor 1.0 is correct there), so only
+    a standardisation=True recorded-factor assertion can catch it.
+
+    Correction round 1, Finding 7: making the watch norm assertion two-sided is
+    not enough - ACCEL_USER_BAND starts at 0.0, so its lower bound is vacuous
+    for a vector norm and an over-division on the watch path alone still passed
+    17/17. The guard that bites pins the published value to the RECORDED factor:
+    the two are artefacts of one decision and nothing else tied them together,
+    so a scaling applied to the data but not reflected in the factor - or the
+    reverse - went unnoticed.
     """
     write_fixture(tmp_path, standardisation=True)
     a = SensorLoggerAdapter()
@@ -117,11 +133,20 @@ def test_standardisation_on_harmonises_acceleration_and_rawaccel_to_g(tmp_path):
 
     watch = bundle.tables["watch"]
     accel_norm = np.linalg.norm(watch[list(S.COLUMNS[S.Quantity.ACCEL_USER])].to_numpy(), axis=1)
-    assert np.median(accel_norm) <= S.ACCEL_USER_BAND[1]
+    assert S.ACCEL_USER_BAND[0] <= np.median(accel_norm) <= S.ACCEL_USER_BAND[1]
 
     rawaccel = bundle.tables["watch_rawaccel"]
     raw_norm = np.linalg.norm(rawaccel[list(S.COLUMNS[S.Quantity.ACCEL_TOTAL])].to_numpy(), axis=1)
     assert S.ACCEL_TOTAL_BAND[0] <= np.median(raw_norm) <= S.ACCEL_TOTAL_BAND[1]
+
+    ch = build_channels([bundle]).set_index(["modality", "column"])["unit_conversion_factor"]
+    assert ch.loc[("watch", "accel_user_x")] == pytest.approx(1.0 / S.G_TO_MS2)
+    assert ch.loc[("watch_rawaccel", "accel_total_x")] == pytest.approx(1.0 / S.G_TO_MS2)
+
+    src = pd.read_csv(a.discover(tmp_path)[0].path / "WristMotion.csv").sort_values(
+        "time", kind="stable")
+    assert watch["accel_user_x"].to_numpy() == pytest.approx(
+        src["accelerationX"].to_numpy() * ch.loc[("watch", "accel_user_x")])
 
 
 def test_unit_conversion_factor_is_recorded_per_column_not_restated(tmp_path):

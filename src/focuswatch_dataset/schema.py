@@ -35,6 +35,16 @@ UNITS: dict[Quantity, str] = {
     Quantity.QUAT: "1",
 }
 
+# Closed vocabulary for the manifest's accel_semantics field (I6). Anything
+# not a key here - an empty string, a typo, a future third value - is
+# unrecognised and validate.validate_recording must fail loudly on it rather
+# than silently skip the cross-check (see that function's
+# accel_semantics_matches_columns finding).
+ACCEL_SEMANTICS_QUANTITY: dict[str, Quantity] = {
+    "total": Quantity.ACCEL_TOTAL,
+    "user": Quantity.ACCEL_USER,
+}
+
 TIME_COLUMN = "t_ns"
 
 ACCEL_USER_BAND = (0.0, 0.2)

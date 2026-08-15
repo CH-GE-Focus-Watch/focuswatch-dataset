@@ -199,6 +199,21 @@ def test_accel_semantics_total_fails_when_only_accel_user_columns_are_present():
     assert "accel_semantics_matches_columns" in failed_checks(findings)
 
 
+def test_accel_semantics_unrecognised_value_fails_instead_of_silently_passing():
+    """Finding 5 (correction round 1): a typo, an empty string, or a future
+    third value used to resolve to no Quantity at all, so the check simply
+    never emitted a finding - a skipped check indistinguishable from an
+    absent one, and the garbage value would still reach sessions.parquet
+    unchecked. A motion table being present must always produce a finding.
+    """
+    watch = make_watch(n=200)
+    findings = validate_recording("R1", {"watch": watch}, {"accel_semantics": "totall"})  # typo
+    assert "accel_semantics_matches_columns" in failed_checks(findings)
+
+    findings = validate_recording("R1", {"watch": watch}, {"accel_semantics": ""})
+    assert "accel_semantics_matches_columns" in failed_checks(findings)
+
+
 # --- Coverage matrix -----------------------------------------------------------
 
 def test_coverage_accepts_a_complete_report():
