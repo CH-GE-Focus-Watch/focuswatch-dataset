@@ -61,6 +61,19 @@ def test_validation_report_is_written_and_all_checks_pass(tmp_path):
     assert [f for f in findings if not f["passed"]] == []
 
 
+def test_delta_is_never_applied_or_published(tmp_path):
+    """I7: delta_applied had no test at all - flipping manifest.py's default
+    to True left 213/213 green. Folds in C2's other D5 guarantee: pen_delta_s
+    (the estimated offset itself) must stay NaN for every row, not just the
+    estimated_delta cohort - publishing it risks irreparable mislabeling.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    assert not manifest["delta_applied"].any()
+    assert manifest["pen_delta_s"].isna().all()
+
+
 def test_strict_build_aborts_on_a_physical_failure(tmp_path, monkeypatch):
     from focuswatch_dataset import schema as S
     src = sources(tmp_path)
@@ -405,6 +418,35 @@ def test_none_policy_leaves_pen_xy_untouched(tmp_path):
     for rid in pen_rows["recording_id"]:
         pen = read_table(out / "pen" / f"{rid}.parquet")
         assert pen[["x", "y"]].notna().any().any(), rid
+
+
+# --- I11: build_git_sha resolves against the package's own repo -----------
+
+def test_git_sha_resolves_against_package_location_not_cwd(tmp_path, monkeypatch):
+    """The pre-fix `_git_sha()` shelled `git rev-parse HEAD` with no `cwd`, so
+    it read whatever repository the CALLER happened to be sitting in (or none
+    at all) instead of this package's own checkout. Chdir to a bare, non-git
+    tmp_path and confirm the SHA is still this repo's real SHA, not "".
+    """
+    from focuswatch_dataset import build
+    monkeypatch.chdir(tmp_path)
+    sha = build._git_sha()
+    core = sha.removesuffix("-dirty")
+    assert len(core) == 40 and all(c in "0123456789abcdef" for c in core)
+
+
+def test_git_sha_falls_back_to_the_installed_version_not_an_empty_string(monkeypatch):
+    """A checkout with no .git at all (e.g. installed from a wheel) must still
+    publish a real, checkable provenance fact - not "", which is
+    indistinguishable from "the lookup ran and found nothing".
+    """
+    from focuswatch_dataset import build
+
+    def _raise(*a, **k):
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr(build.subprocess, "check_output", _raise)
+    assert build._git_sha() != ""
 
 
 # --- CLI: fw report (fix round 1, item 4) ----------------------------------

@@ -36,6 +36,7 @@ to find.
 """
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import shutil
 import subprocess
@@ -63,10 +64,31 @@ _PRIOR_BUILD_SIGNATURE = ("sessions.parquet", "datapackage.json")
 
 
 def _git_sha() -> str:
+    """The SHA of this PACKAGE's own checkout, not whatever the caller's cwd is.
+
+    I11: no `cwd` meant `git rev-parse HEAD` ran against the caller's working
+    directory - "not a git repository" for an unrelated cwd, or a foreign
+    repo's SHA for an unrelated one. `-dirty` records uncommitted changes,
+    which a bare SHA would otherwise claim as clean. Never an empty string: a
+    checkout with no `.git` at all (e.g. installed from a wheel) falls back
+    to the installed package's own version, which is still a real, checkable
+    provenance fact - unlike "".
+    """
+    repo_dir = Path(__file__).resolve().parent
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=repo_dir, text=True,
+            capture_output=True, check=True,
+        ).stdout.strip()
+        return f"{sha}-dirty" if dirty else sha
     except Exception:
-        return ""
+        try:
+            return importlib.metadata.version("focuswatch-dataset")
+        except importlib.metadata.PackageNotFoundError:
+            return ""
 
 
 def _validate(bundle: RecordingBundle) -> list:
