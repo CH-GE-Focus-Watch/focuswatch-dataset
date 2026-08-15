@@ -80,8 +80,34 @@ class SensorLoggerAdapter:
     def discover(self, root: Path) -> list[RecordingRef]:
         refs = []
         for d in sorted(p for p in root.iterdir() if (p / "WristMotion.csv").exists()):
-            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ETH-{d.name}", "ETH", self.name, d))
+            token = self._participant_token(d)
+            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ETH-{token}", "ETH", self.name, d))
         return refs
+
+    @classmethod
+    def _participant_token(cls, d: Path) -> str:
+        """The session's own participant id, from session_start's payload (I9).
+
+        Never parsed from the directory name - real directories carry
+        session suffixes (`E1_session3`, `focuswatch_T10_s1_d7498f51`) that
+        are not DESIGN §2.2's `ETH-T8` token form. Fails loudly rather than
+        falling back to a directory-name guess: the two ETH participant
+        namespaces are disjoint (open question 3), which only holds if the
+        published token is the one the session itself states.
+        """
+        payload = cls._read_session_json(d)
+        start = cls._find_event(payload["events"], "session_start")
+        token = (start or {}).get("payload", {}).get("participant_id")
+        if not token:
+            raise ValueError(
+                f"{d}: no events[session_start].payload.participant_id - "
+                "cannot derive a participant id without guessing from the directory name"
+            )
+        return str(token)
+
+    @staticmethod
+    def _find_event(events: list[dict], name: str) -> dict | None:
+        return next((e for e in events if e["event"] == name), None)
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
         d = ref.path
@@ -111,7 +137,7 @@ class SensorLoggerAdapter:
             tables["watch_rawaccel"] = rawaccel_df
             column_factors.update({("watch_rawaccel", c): f for c, f in rawaccel_factors.items()})
 
-        pen, markers, generation = self._from_session_json(d)
+        pen, markers, generation, handedness, dropped_keys = self._from_session_json(d)
         if pen is not None:
             tables["pen"] = pen
         if markers is not None:
@@ -153,6 +179,16 @@ class SensorLoggerAdapter:
             "src_standardisation": si,
             "unit_conversion_factor_by_column": column_factors,
             "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
+            # Why (C5): promoted from a buried, unread payload field to a
+            # typed manifest column - nothing read it while watch_wrist_side
+            # published "unknown" for all 9 ETH recordings even though the
+            # source states it.
+            "handedness": handedness,
+            # Why (C5): internal-only (see manifest._INTERNAL_META_KEYS) -
+            # surfaced as a validate.py Finding, not a manifest column, so a
+            # future export's new payload field is visible in
+            # validation_report.json rather than silently dropped.
+            "src_payload_dropped_key_count": dropped_keys,
         }
         return RecordingBundle(ref, tables, meta)
 
@@ -197,9 +233,37 @@ class SensorLoggerAdapter:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
         return json.loads(candidates[0].read_text())
 
-    def _from_session_json(self, d: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str]:
+    @staticmethod
+    def _redact_payload(payload: dict) -> tuple[dict, int]:
+        """Drop any payload key outside the reviewed allow-list (C5).
+
+        Returns the redacted dict AND the number of keys dropped, so the
+        caller can accumulate a total and report it - an unknown key must be
+        visible, not silently absorbed, so a future export's new field gets
+        noticed rather than published unreviewed by default.
+        """
+        allowed = {k: v for k, v in payload.items() if k in S.MARKER_PAYLOAD_ALLOWED_KEYS}
+        return allowed, len(payload) - len(allowed)
+
+    @staticmethod
+    def _handedness(events: list[dict]) -> str:
+        start = SensorLoggerAdapter._find_event(events, "session_start")
+        value = (start or {}).get("payload", {}).get("handedness")
+        if value is None:
+            return "unknown"
+        value = str(value).strip().lower()
+        if value not in S.HANDEDNESS_VALUES:
+            raise ValueError(
+                f"unrecognised handedness value {value!r}; expected one of {S.HANDEDNESS_VALUES}"
+            )
+        return value
+
+    def _from_session_json(
+        self, d: Path
+    ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str, str, int]:
         payload = self._read_session_json(d)
         events = payload["events"]
+        handedness = self._handedness(events)
 
         # Why (C3): generation A (S3/T8/T9/T10) stores strokes under a
         # separate, flat `pen_events` key (type/x/y/force, no payload
@@ -260,17 +324,22 @@ class SensorLoggerAdapter:
 
         others = [e for e in all_events if e["event"] not in dot_types]
         markers = None
+        dropped_keys = 0
         if others:
+            redacted = [self._redact_payload(e.get("payload", {})) for e in others]
+            dropped_keys = sum(n for _, n in redacted)
             markers = sort_stable_by_time(pd.DataFrame({
                 "t_ns": to_unix_ns(np.array([e["t_ms"] for e in others], dtype=np.int64), "ms"),
                 "event": [e["event"] for e in others],
                 # Why (I15): NaN, not -1 - see ege.py's identical fix for the rationale.
                 "task_id": "", "task_name": "", "task_index": np.nan,
                 "task_category": "", "protocol_id": "eth_web",
-                "src_payload": [json.dumps(e.get("payload", {})) for e in others],
+                # Why (C5): allow-listed, not the raw payload - user_agent/
+                # screen/notes must never reach the public bundle.
+                "src_payload": [json.dumps(p) for p, _ in redacted],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
             }))
-        return pen, markers, generation
+        return pen, markers, generation, handedness, dropped_keys
 
 
 register(SensorLoggerAdapter())

@@ -101,6 +101,30 @@ PEN_PRESSURE_SCALE_GEN_A = "webapp_force"
 PEN_XY_UNIT_GEN_B = "sl_webapp_raw"
 PEN_PRESSURE_SCALE_GEN_B = "sl_webapp_force"
 
+# C5: the ETH web app's own event payload vocabulary, closed and reviewed -
+# see whole-branch-review-findings.md §C5. An ALLOW-list, not a deny-list: a
+# deny-list fails open (the next export adds a field and it publishes
+# unreviewed), an allow-list fails closed (a new field is dropped, and
+# counted, until someone reviews and adds it here). user_agent (browser
+# build) and screen (display geometry) are a device fingerprint; notes is
+# free text an experimenter can type anything into (measured: "S3_Sensor_
+# logger_dl-studying") - none of the three may ever reach the public bundle.
+MARKER_PAYLOAD_ALLOWED_KEYS = frozenset({
+    "color", "duration_ms", "force", "from", "get_ready_ms", "ground_truth",
+    "handedness", "idx", "look_down", "mode", "operator_mode", "participant_id",
+    "pen_connected_at_start", "pen_connected_t_ms", "pen_minus_session_ms",
+    "pen_name", "phase", "phase_count", "phase_duration_ms", "phase_elapsed_ms",
+    "session_number", "session_start_t_ms", "tilt", "time_origin_ms",
+    "timestamp", "tip", "total_events", "total_pen_events", "x", "y",
+})
+
+# C5: handedness, promoted from a buried, unread payload field to a typed
+# manifest column. Closed vocabulary - an unrecognised value must fail loudly
+# rather than publish free text verbatim into a typed column (the same
+# payload that carries it also carries `notes`, an experimenter free-text
+# field, so nothing about this payload can be trusted to already be clean).
+HANDEDNESS_VALUES = ("left", "right", "unknown")
+
 # Which modality's Finding stream a manifest capability flag gates. The single
 # source both validate.check_coverage (which physical checks a flag requires)
 # and manifest.build_manifest (which flags are recomputed from table/column

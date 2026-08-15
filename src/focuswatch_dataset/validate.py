@@ -221,6 +221,17 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
                 f"no sample more than {S.SPILL_GUARD_S} s before session start",
                 lag_s <= S.SPILL_GUARD_S)
 
+    # C5: informational, always passed - the count itself is the point. An
+    # unknown payload key is dropped before publication (schema.py's
+    # MARKER_PAYLOAD_ALLOWED_KEYS), not published; this Finding is how many
+    # were dropped, so a future export's new field is visible in
+    # validation_report.json rather than silently absorbed.
+    dropped_keys = meta.get("src_payload_dropped_key_count")
+    if dropped_keys is not None:
+        add("payload_keys_redacted", "markers", dropped_keys,
+            "payload keys outside schema.MARKER_PAYLOAD_ALLOWED_KEYS are dropped before "
+            "publication, not silently kept", True)
+
     # I6: accel_semantics must agree with which acceleration columns the
     # motion table actually carries - "total" implies accel_total_*, "user"
     # implies accel_user_*. Checked against watch when present, else headimu

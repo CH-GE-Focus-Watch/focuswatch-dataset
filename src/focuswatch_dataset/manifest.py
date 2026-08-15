@@ -60,7 +60,7 @@ MANIFEST_COLUMNS = (
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
     "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
     "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
-    "watch_wrist_side",
+    "watch_wrist_side", "handedness",
     "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
     "delta_applied", "alignment_note",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
@@ -81,6 +81,10 @@ MANIFEST_COLUMNS = (
 _INTERNAL_META_KEYS = frozenset({
     "session_start_ns", "src_standardisation",
     "time_domain_by_modality", "unit_conversion_factor_by_column",
+    # Why (C5): a diagnostic count, not a bundle fact - surfaced as a
+    # validate.py Finding (payload_keys_redacted) in validation_report.json,
+    # not as a sessions.parquet column.
+    "src_payload_dropped_key_count",
 })
 
 # Why: these are the flags check_coverage gates required physical checks on -
@@ -104,7 +108,7 @@ _DERIVED_FIELDS = (_STRUCTURAL_FLAGS | _DERIVED_MEASURED_FIELDS
                   | _DERIVED_TASK_COUNT_FIELDS | _DERIVED_TIME_FIELDS)
 
 _DEFAULTS: dict[str, object] = {
-    "watch_wrist_side": "unknown", "delta_applied": False,
+    "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
     "pen_delta_s": np.nan, "pen_delta_sigma": np.nan, "alignment_note": "",
     "accel_still_bias": np.nan, "issue_codes": "", "redaction_policy": "none",
     "build_git_sha": "", "subject_index": -1, "study_mode": "",

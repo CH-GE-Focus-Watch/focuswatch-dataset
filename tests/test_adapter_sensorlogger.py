@@ -16,7 +16,7 @@ T0_NS = 1780853585220_000_000
 
 
 def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pen=True,
-                  with_rawaccel=True, generation="B"):
+                  with_rawaccel=True, generation="B", participant_id="E2", handedness="right"):
     d = root / sid
     d.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(2)
@@ -69,8 +69,14 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
 
     (d / "Annotation.csv").write_text("")
 
+    # Why (I9/C5): the session's own token and the (unread until now) handedness
+    # covariate both live in session_start's payload - both are on the
+    # allow-list (C5), so redaction never strips them.
+    start_payload = {"participant_id": participant_id}
+    if handedness is not None:
+        start_payload["handedness"] = handedness
     events = [{"t_ms": int(t[0] // 1_000_000), "t_session_ms": 0.0, "event": "session_start",
-               "session_id": "x", "payload": {}},
+               "session_id": "x", "payload": start_payload},
               {"t_ms": int(t[10] // 1_000_000), "t_session_ms": 100.0, "event": "pen_session_sync",
                "session_id": "x",
                "payload": {"pen_connected_t_ms": 1.0, "session_start_t_ms": 2.0,
@@ -258,6 +264,101 @@ def test_missing_raw_accel_is_reported_not_faked(tmp_path):
     bundle = a.load(ref)
     assert "watch_rawaccel" not in bundle.tables
     assert bundle.meta["has_watch_rawaccel"] is False
+
+
+# --- I9: participant id from session_start's payload, not the directory ---
+
+def test_participant_id_comes_from_session_start_payload_not_directory_name(tmp_path):
+    """Real SL directories carry session suffixes (E1_session3,
+    focuswatch_T10_s1_d7498f51) that are not DESIGN §2.2's `ETH-T8` token
+    form - the participant id must come from the session's own stated token,
+    not a directory-name parse."""
+    write_fixture(tmp_path, sid="E1_session3_d7498f51", participant_id="E1")
+    ref = SensorLoggerAdapter().discover(tmp_path)[0]
+    assert ref.participant_id == "ETH-E1"
+    assert ref.recording_id == "ETH-SL-E1_session3_d7498f51"   # recording_id is unaffected
+
+
+def test_discover_fails_loudly_without_a_participant_id(tmp_path):
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    payload = json.loads(next(d.glob("*.json")).read_text())
+    payload["events"][0]["payload"].pop("participant_id")
+    next(d.glob("*.json")).write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="participant_id"):
+        SensorLoggerAdapter().discover(tmp_path)
+
+
+# --- C5: allow-listed payload, promoted handedness -------------------------
+
+def test_handedness_reaches_the_manifest(tmp_path):
+    write_fixture(tmp_path, handedness="right")
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["handedness"] == "right"
+    assert build_manifest([bundle]).iloc[0]["handedness"] == "right"
+
+
+def test_handedness_defaults_to_unknown_when_absent(tmp_path):
+    write_fixture(tmp_path, handedness=None)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["handedness"] == "unknown"
+
+
+def test_unrecognised_handedness_value_fails_loudly(tmp_path):
+    write_fixture(tmp_path, handedness="ambidextrous")
+    a = SensorLoggerAdapter()
+    with pytest.raises(ValueError, match="handedness"):
+        a.load(a.discover(tmp_path)[0])
+
+
+def test_device_fingerprint_and_free_text_never_reach_the_published_payload(tmp_path):
+    """C5: user_agent (browser build) and screen (display geometry) are a
+    device fingerprint; notes is free text an experimenter can type anything
+    into (measured: "S3_Sensor_logger_dl-studying"). None of the three may
+    survive into src_payload - the allow-list, not the adapter's own
+    discretion, is what guarantees that."""
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    jf = next(d.glob("*.json"))
+    payload = json.loads(jf.read_text())
+    payload["events"][0]["payload"].update({
+        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/150.0.0.0",
+        "screen": {"w": 1800, "h": 1169, "dpr": 2},
+        "notes": "S3_Sensor_logger_dl-studying",
+    })
+    jf.write_text(json.dumps(payload))
+
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    markers = bundle.tables["markers"]
+    combined = " ".join(markers["src_payload"])
+    assert "user_agent" not in combined
+    assert "screen" not in combined
+    assert "notes" not in combined
+    assert "Chrome" not in combined
+    # Why: participant_id is on the allow-list (C5) - redaction must not
+    # collaterally strip fields the pipeline elsewhere depends on.
+    assert "participant_id" in combined
+
+
+def test_dropped_payload_key_count_is_reported(tmp_path):
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    jf = next(d.glob("*.json"))
+    payload = json.loads(jf.read_text())
+    payload["events"][0]["payload"].update({"user_agent": "x", "screen": {"w": 1}})
+    jf.write_text(json.dumps(payload))
+
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.meta["src_payload_dropped_key_count"] == 2
+
+    finding = next(f for f in validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
+                   if f.check == "payload_keys_redacted")
+    assert finding.observed == 2
+    assert finding.passed is True
 
 
 def test_generation_a_pen_events_key_is_read_not_dropped(tmp_path):
