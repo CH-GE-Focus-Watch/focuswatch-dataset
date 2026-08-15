@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -361,6 +362,24 @@ def test_interrupted_promotion_leftovers_are_announced_not_touched(tmp_path, cap
     # landed correctly at `out` alongside them.
     assert (leftover_build / "marker.txt").read_text() == "unpromoted staging content"
     assert (leftover_backup / "marker.txt").read_text() == "previous good build"
+    assert (out / "sessions.parquet").exists()
+
+
+def test_unlistable_parent_costs_the_notice_and_not_the_build(tmp_path, monkeypatch):
+    """The leftover notice is a courtesy and must never fail a build. Listing
+    the parent can raise OSError, which is not a RuntimeError and would reach
+    the user as a traceback past the CLI's handler.
+    """
+    out = tmp_path / "out"
+    real_iterdir = Path.iterdir
+
+    def refuse_parent(self):
+        if self == tmp_path:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", refuse_parent)
+    build_dataset(sources(tmp_path), out)
     assert (out / "sessions.parquet").exists()
 
 

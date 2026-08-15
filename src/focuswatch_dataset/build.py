@@ -172,8 +172,16 @@ def _warn_about_interrupted_promotions(out: Path) -> None:
         return
     build_prefix = f".{out.name}.build-"
     backup_prefix = f".{out.name}.replaced-"
+    try:
+        siblings = list(parent.iterdir())
+    except OSError:
+        # Why: this notice is a courtesy, so a parent we cannot list must cost
+        # the notice and nothing else. Letting the error out would abort a build
+        # that had not started yet, and as a non-RuntimeError it would bypass
+        # the CLI's handler and surface as a traceback.
+        return
     leftovers = sorted(
-        p for p in parent.iterdir()
+        p for p in siblings
         if p.is_dir() and (p.name.startswith(build_prefix) or p.name.startswith(backup_prefix))
     )
     for p in leftovers:
