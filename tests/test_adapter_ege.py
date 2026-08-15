@@ -157,6 +157,23 @@ def test_pen_vocabulary_maps_to_canonical(tmp_path):
     assert framing.empty  # pen_paper_info carries no position, never becomes a pen/ row
 
 
+def test_pen_event_with_an_unmapped_type_raises(tmp_path):
+    """Fix round C item 6 audit: this raise (adapters/ege.py:181-182) guards
+    `strokes["type"].map(S.PEN_EVENTS_GEN_A)` against a `type` value outside
+    the known vocabulary - it had no test, so the map silently producing NaN
+    for an unrecognised source type could have published a stroke with
+    `dot_type=NaN` instead of failing loudly.
+    """
+    write_fixture(tmp_path)
+    pen_path = tmp_path / "T6" / "pen_events.csv"
+    df = pd.read_csv(pen_path)
+    df.loc[0, "type"] = "pen_wiggle"
+    df.to_csv(pen_path, index=False)
+    a = EgeAdapter()
+    with pytest.raises(ValueError, match="unmapped pen event types"):
+        a.load(a.discover(tmp_path)[0])
+
+
 def test_pen_paper_info_routes_to_markers_not_dropped(tmp_path):
     """C3/I8: pen_paper_info used to be silently discarded (I8) - it carries
     no position, so it still never becomes a pen/ row, but it must not

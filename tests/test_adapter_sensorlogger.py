@@ -422,6 +422,26 @@ def test_generation_a_pen_xy_unit_matches_ege_not_the_e_series(tmp_path):
     assert gen_a.meta["pen_xy_unit"] != gen_b.meta["pen_xy_unit"]
 
 
+def test_generation_a_pen_events_entry_missing_a_required_key_raises(tmp_path):
+    """Fix round C item 6: this raise (adapters/sensorlogger.py:274-280) had no
+    test at all - `missing = []` (never triggering it) left 293/293 green.
+    The flat generation-A pen_events shape is inferred, not verified against a
+    real export, so a malformed entry must fail loudly and specifically
+    rather than surface as a bare, unhelpful KeyError deep in the mapping
+    below.
+    """
+    write_fixture(tmp_path, sid="focuswatch_S3_s1", generation="A")
+    json_path = tmp_path / "focuswatch_S3_s1" / "focuswatch_S3_s1.json"
+    body = json.loads(json_path.read_text())
+    del body["pen_events"][0]["type"]
+    json_path.write_text(json.dumps(body))
+
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if "S3" in r.recording_id)
+    with pytest.raises(ValueError, match="missing required key"):
+        a.load(ref)
+
+
 def test_generation_a_loaded_pen_passes_the_validator(tmp_path):
     write_fixture(tmp_path, sid="focuswatch_T8_s1", generation="A")
     a = SensorLoggerAdapter()
