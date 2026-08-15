@@ -609,9 +609,31 @@ def test_cli_report(tmp_path, capsys):
     assert main(["report", "--dataset", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "recordings" in printed
-    assert "participants" in printed
+    assert "participant identifiers" in printed
     for cohort in ("ML4SCS", "ETH", "AIRPODS"):
         assert cohort in printed
+
+
+def test_cli_report_does_not_claim_more_distinct_people_than_it_can_show(tmp_path, capsys):
+    """Fix round C item 4: `fw report` still printed "N participants" -
+    exactly the claim commit 243ee07 removed from the README (`participant_id`
+    is namespaced per cohort, so the count would be identical if all three
+    cohorts had recorded the same people). It survived in this sibling
+    surface; both must use the same wording so neither self-statement can
+    drift from the other again.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    readme = (out / "README.md").read_text()
+    capsys.readouterr()
+
+    assert main(["report", "--dataset", str(out)]) == 0
+    printed = capsys.readouterr().out
+    assert not re.search(r"\d+\s+participants\b", printed), (
+        "fw report states a bare participant count"
+    )
+    assert re.search(r"\d+ participant identifiers", printed)
+    assert re.search(r"\d+ participant identifiers", printed).group() in readme
 
 
 def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):

@@ -72,6 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"report failed: could not read bundle at {dataset}: {exc}")
         return 1
-    print(f"{len(manifest)} recordings, {manifest['participant_id'].nunique()} participants")
+    # Why (item 4, fix round C): "participant_id" is namespaced per cohort, so
+    # this count would be unchanged if all three cohorts had recorded the same
+    # people - "participants" hands a citing paper an N the data cannot
+    # support. Matches the README wording (docs.write_readme), which commit
+    # 243ee07 already fixed for this exact reason.
+    print(f"{len(manifest)} recordings, "
+          f"{manifest['participant_id'].nunique()} participant identifiers")
     print(manifest.groupby("cohort").size().to_string())
     return 0
