@@ -4,6 +4,15 @@ Stroke geometry reconstructs the written text. Structured tasks have prescribed
 content; free-writing blocks do not. The policy runs on the canonical pen table
 so it covers every source, and it blanks values rather than dropping rows.
 
+`x`/`y` are the only channel carrying spatial shape, so blanking them rules
+out literal glyph reconstruction. `pressure`, `tilt_x`, `tilt_y`, `dot_type`
+and the full nanosecond `t_ns` survive untouched - enough to derive stroke
+count, per-stroke duration (each PEN_DOWN -> PEN_UP interval), inter-stroke
+pause structure, tempo, and a pressure/tilt signature. That supports
+behavioural inference and potentially re-identification, not reading what
+was written. The policy names say "xy", not "content" or "anonymised" -
+read them that way before deciding whether to switch one on.
+
 Default is NONE - the dataset owner's decision is to publish full coordinates
 for now, keeping the option to obscure them later. `redact_bundle` is the seam
 a build pipeline calls to keep that choice reversible: it applies the policy
@@ -43,11 +52,15 @@ def _free_writing_spans(markers: pd.DataFrame) -> list[tuple[int, int]]:
 
 def apply_redaction(pen: pd.DataFrame, markers: pd.DataFrame | None,
                     policy: RedactionPolicy) -> pd.DataFrame:
-    if policy is RedactionPolicy.NONE:
+    # Why: == not is - a caller wired from a CLI flag or config value passes a
+    # plain str, and StrEnum equality (unlike identity) still matches it. An
+    # `is` check that silently misses would fall through to the next branch
+    # instead of raising, quietly downgrading e.g. "all_xy" to a partial redaction.
+    if policy == RedactionPolicy.NONE:
         return pen
     out = pen.copy()
     present = [c for c in XY_COLUMNS if c in out.columns]
-    if policy is RedactionPolicy.ALL_XY:
+    if policy == RedactionPolicy.ALL_XY:
         out[present] = np.nan
         return out
     spans = _free_writing_spans(markers) if markers is not None and not markers.empty else []

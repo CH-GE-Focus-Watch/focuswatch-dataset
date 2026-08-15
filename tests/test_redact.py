@@ -88,21 +88,42 @@ def test_redact_bundle_default_is_none_and_leaves_pen_untouched():
     assert out.meta["redaction_policy"] == "none"
 
 
-def test_redact_bundle_manifest_agrees_with_the_actual_data_for_every_policy():
-    """The manifest's redaction_policy must never disagree with what happened
-    to the coordinates it describes - in either direction: declaring "none"
-    over data that was actually blanked, or declaring a policy over
-    coordinates that were never touched, are both a false provenance record.
+def test_redact_bundle_manifest_declares_the_requested_policy():
+    """The manifest's redaction_policy must equal what redact_bundle was
+    asked to apply - the declaration half of the provenance guarantee.
     """
     for policy in RedactionPolicy:
         out = redact_bundle(_bundle(), policy)
         row = build_manifest([out]).iloc[0]
         assert row["redaction_policy"] == policy.value
+
+
+def test_redact_bundle_actually_blanks_coordinates_iff_a_policy_is_declared():
+    """The dangerous direction, standalone: a manifest could declare a
+    policy was applied while the coordinates were never touched. This must
+    stay a standalone check - if it were ever folded back into the
+    declaration test above, a future edit that trims that shared block
+    could silently drop the only assertion catching that failure mode.
+    """
+    for policy in RedactionPolicy:
+        out = redact_bundle(_bundle(), policy)
         any_blanked = out.tables["pen"][["x", "y"]].isna().any().any()
-        if policy is RedactionPolicy.NONE:
+        if policy == RedactionPolicy.NONE:
             assert not any_blanked
         else:
             assert any_blanked
+
+
+def test_redact_bundle_accepts_the_raw_string_form_of_a_policy():
+    """StrEnum members compare equal to their plain string value, so a
+    caller wired from a CLI flag or config value - which passes a plain str,
+    not a RedactionPolicy member - must still get the correct behaviour.
+    An `is` comparison in apply_redaction would silently miss this and fall
+    through toward a weaker policy instead of applying the requested one.
+    """
+    out = redact_bundle(_bundle(), "all_xy")
+    assert out.tables["pen"][["x", "y"]].isna().all().all()
+    assert out.meta["redaction_policy"] == "all_xy"
 
 
 def test_redact_bundle_without_a_pen_table_still_records_the_policy():
