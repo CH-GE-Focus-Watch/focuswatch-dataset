@@ -54,6 +54,11 @@ QUAT_GRAVITY_ANGLE_MAX_DEG = 2.0
 QUAT_STILL_ANGLE_MAX_DEG = 5.0
 RATE_TOLERANCE = 0.20
 SPILL_GUARD_S = 60.0
+# Why: the AirPods per-sample label column is an expansion of the interval
+# ground truth over an unstated clock anchor; re-expanding the parsed
+# intervals and comparing against that column proves the anchor before it is
+# dropped. Below this agreement the anchor, not the data, is wrong.
+ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
