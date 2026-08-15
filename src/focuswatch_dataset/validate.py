@@ -68,7 +68,13 @@ def validate_motion_table(df: pd.DataFrame, recording_id: str, modality: str,
         "no backward steps", bool(np.all(np.diff(t) >= 0)))
 
     measured = median_rate_hz(t)
-    if nominal_hz:
+    # Why: pd.notna, not `if nominal_hz:` - a manifest row read back out of a
+    # DataFrame turns a source's `None` (no nominal rate declared) into
+    # float NaN, and `bool(float("nan"))` is True. A truthiness check would
+    # silently take the declared-rate branch on a NaN and always fail the
+    # comparison below (NaN < tolerance is False), misreporting an honestly
+    # undeclared rate as a bad one. See tests/test_manifest.py for the proof.
+    if pd.notna(nominal_hz):
         add("sample_rate", S.TIME_COLUMN, round(measured, 3), f"{nominal_hz} Hz +-20%",
             abs(measured - nominal_hz) / nominal_hz < S.RATE_TOLERANCE)
     else:
