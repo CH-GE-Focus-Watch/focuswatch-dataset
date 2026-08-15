@@ -9,6 +9,7 @@ from scipy.spatial.transform import Rotation
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters import base
 from focuswatch_dataset.adapters.ege import EgeAdapter
+from focuswatch_dataset.manifest import build_manifest
 from focuswatch_dataset.validate import (
     check_coverage, validate_motion_table, validate_pen_table, validate_recording,
 )
@@ -51,8 +52,14 @@ def write_fixture(root, sid="T6", n=3000):
         "created_at": "2026-06-04",
     }).to_csv(d / "imu_samples_rows.csv", index=False)
 
+    # Why: at least 100 rows - validate._validate_quaternion silently skips
+    # the quat_norm check below that count (guards against ML4SCS's
+    # partly-empty forward-only capture), which would otherwise leave
+    # has_head_quaternion=True with no finding to back it, an
+    # indistinguishable-from-untested coverage gap on every build.
+    n_head = 150
     pd.DataFrame({
-        "id": np.arange(50), "session_id": sid, "t_ms": t[:50],
+        "id": np.arange(n_head), "session_id": sid, "t_ms": t[:n_head],
         "qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0,
         "ax": 0.0, "ay": 0.0, "az": -1.0, "created_at": "2026-06-04",
     }).to_csv(d / "head_motion_samples_rows.csv", index=False)
@@ -151,24 +158,21 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     was actually exercised, which is why the headimu/gyro_range gap (Ege's
     head table structurally carries no gyroscope) went uncaught. Builds a
     real bundle from the existing fixture (watch + headimu + pen + markers,
-    all present) and runs it through the real gate."""
+    all present) and runs it through the real gate.
+
+    Why build_manifest(), not a hand-picked dict of flags: a hand-built
+    manifest that forgets to name a flag (e.g. has_head_quaternion) makes
+    check_coverage silently skip that flag's requirement rather than fail
+    it - the exact masking bug this test exists to catch, previously true
+    of has_head_gyro and, until this fix, still true of has_head_quaternion/
+    has_head_gravity here. build_manifest derives every flag the same way
+    the real build does, so this test can never again omit one by hand.
+    """
     write_fixture(tmp_path)
     a = EgeAdapter()
     ref = a.discover(tmp_path)[0]
     bundle = a.load(ref)
-
-    manifest = pd.DataFrame([{
-        "recording_id": ref.recording_id,
-        "has_watch": "watch" in bundle.tables,
-        "has_watch_rawaccel": "watch_rawaccel" in bundle.tables,
-        "has_headimu": "headimu" in bundle.tables,
-        "has_pen": "pen" in bundle.tables,
-        "has_markers": "markers" in bundle.tables,
-        "has_attention": "attention" in bundle.tables,
-        "has_gravity": bundle.meta["has_gravity"],
-        "has_quaternion": bundle.meta["has_quaternion"],
-        "has_head_gyro": bundle.meta["has_head_gyro"],
-    }])
+    manifest = build_manifest([bundle])
 
     nominal = bundle.meta["watch_hz_nominal"]   # None - this source states no nominal rate
     findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch", nominal)

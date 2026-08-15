@@ -81,6 +81,14 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
                            "payload": {"x": 11.68 + i, "y": 56.19, "force": 408,
                                        "tilt": {"x": 93, "y": 139, "twist": 9},
                                        "timestamp": 1716121921598}})
+    # Why: without a trailing session_end, markers' span truncates to its last
+    # early event (~100 ms in) while pen strokes and the motion streams run to
+    # the recording's actual end - validate_recording's streams_overlap then
+    # sees markers "end" before pen "starts" and fails on a fixture artefact,
+    # not a real gap. Mirrors the ege fixture's events.csv, which already
+    # brackets the session with session_start/session_end.
+    events.append({"t_ms": int(t[-1] // 1_000_000), "t_session_ms": float((n - 1) * 10),
+                   "event": "session_end", "session_id": "x", "payload": {}})
     (d / f"{sid}.json").write_text(json.dumps({"events": events}))
     return root
 
