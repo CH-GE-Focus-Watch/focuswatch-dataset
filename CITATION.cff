@@ -10,6 +10,14 @@ abstract: >-
   Converts four heterogeneous wrist/head-IMU, pen and observer-annotation
   capture pipelines into one canonical, physically validated Parquet dataset
   for a journal data descriptor.
+# `authors` is mandatory in CFF 1.2.0 - without it GitHub's citation widget and
+# cffconvert both reject the file. Listed here is authorship of THIS CODE.
+# Co-authorship of the DATASET across the partner cohorts is a separate and
+# still-open question (see docs/DESIGN.md §3); settle it before the archive is
+# minted rather than inheriting this list.
+authors:
+  - family-names: Samel
+    given-names: Noah
 license: Apache-2.0
 repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
 version: 0.1.0

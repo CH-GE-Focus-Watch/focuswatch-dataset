@@ -768,3 +768,21 @@ def test_data_dictionary_states_the_generation_a_vs_b_measured_facts(tmp_path):
     assert "E1_session3" in text and "5.69" in text and "16416.00" in text
     assert "pen_paper_info" in text
     assert "millimetre conversion" in text
+
+
+def test_readme_does_not_claim_more_distinct_people_than_it_can_show(tmp_path):
+    """`participant_id` is namespaced per cohort (`ML4SCS-P01`, `AIRPODS-P1`),
+    so its cardinality would be unchanged if all three cohorts had recorded the
+    same people. Calling that number "participants" hands a citing paper an N
+    the data cannot support, which is exactly the class of false self-statement
+    this bundle must not contain.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    readme = (out / "README.md").read_text()
+
+    assert "participant identifiers" in readme
+    assert not re.search(r"\d+\s+participants\b", readme), (
+        "README states a bare participant count"
+    )
+    assert "no" in readme and "mapping across cohorts" in readme

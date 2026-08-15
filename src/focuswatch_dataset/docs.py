@@ -101,7 +101,17 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         "# FocusWatch dataset", "",
         "Wrist and head IMU, pen and observer-annotation ground truth for a",
         f"handwriting-detection study. {n_recordings} recordings, "
-        f"{n_participants} participants, schema version {S.SCHEMA_VERSION}.", "",
+        f"{n_participants} participant identifiers, schema version "
+        f"{S.SCHEMA_VERSION}.", "",
+        # Why: "participants" is the N a citing paper will quote, and this count
+        # cannot support it. Identifiers are namespaced per cohort, so the
+        # number would be identical even if all three cohorts had recorded the
+        # same people - the cohorts were run by different teams and no mapping
+        # between them exists.
+        "Identifiers are namespaced per cohort (`ML4SCS-`, `ETH-`, `AIRPODS-`), so "
+        "this is a count of identifiers, not of established distinct people: no "
+        "participant mapping across cohorts exists. Within a cohort, one identifier "
+        "is one person.", "",
         "## Contents", "",
         "| file | rows | what it is |",
         "|---|---|---|",

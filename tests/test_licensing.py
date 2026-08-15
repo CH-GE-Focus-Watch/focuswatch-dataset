@@ -28,6 +28,22 @@ def test_repo_has_a_citation_file_with_a_clearly_marked_doi_placeholder():
     assert "PLACEHOLDER" in text
 
 
+def test_citation_file_carries_every_field_cff_1_2_0_requires():
+    """The first version of this file omitted `authors`, which CFF 1.2.0 makes
+    mandatory - GitHub's citation widget and cffconvert both reject the file
+    without it, so a citation artefact would have shipped uncitable. Checking
+    that the text mentions "cff-version" could not catch that; the required set
+    has to be checked as a set.
+    """
+    text = (REPO_ROOT / "CITATION.cff").read_text()
+    present = {line.split(":", 1)[0] for line in text.splitlines()
+               if line and not line.startswith((" ", "#", "-"))}
+    assert {"cff-version", "message", "title", "authors"} <= present, (
+        f"CITATION.cff is missing required CFF 1.2.0 keys: "
+        f"{sorted({'cff-version', 'message', 'title', 'authors'} - present)}"
+    )
+
+
 def test_pyproject_declares_the_code_license():
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     assert data["project"]["license"] == "Apache-2.0"
