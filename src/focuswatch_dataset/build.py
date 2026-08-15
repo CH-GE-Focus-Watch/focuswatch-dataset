@@ -314,6 +314,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         if problems and strict:
             raise RuntimeError("manifest inconsistent: " + "; ".join(problems))
 
+        docs.write_license(staging)
         docs.write_datapackage(staging, manifest, channels)
         docs.write_data_dictionary(staging, channels)
         (staging / "validation_report.json").write_text(final_report.to_json())

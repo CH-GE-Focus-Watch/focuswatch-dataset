@@ -6,6 +6,10 @@ build-backend = "hatchling.build"
 name = "focuswatch-dataset"
 version = "0.1.0"
 requires-python = ">=3.11"
+# DESIGN §10: code is Apache-2.0 (LICENSE at repo root); the published
+# dataset itself is CC BY 4.0, declared separately in the bundle's own
+# generated datapackage.json/LICENSE - the two must not be conflated.
+license = "Apache-2.0"
 dependencies = [
     "pandas>=2.0",
     # Why: the Parquet footer records `created_by: parquet-cpp-arrow <version>`,

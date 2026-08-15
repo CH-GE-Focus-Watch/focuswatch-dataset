@@ -13,6 +13,35 @@ import pandas as pd
 from . import schema as S
 
 
+# I12: `write_datapackage` below asserts CC-BY-4.0 in `datapackage.json`'s
+# `licenses` field; without an actual LICENSE file beside it that assertion
+# is unbacked - a downloader has the claim but not the license text. Kept
+# short (a summary + the canonical link), matching how CC licenses are
+# normally shipped: the full legal code is long and lives at the
+# Creative Commons URL, not duplicated per-archive.
+_DATA_LICENSE_TEXT = """\
+FocusWatch dataset - data license
+
+The data files in this bundle (everything except this LICENSE file and the
+generated documentation) are licensed under the Creative Commons
+Attribution 4.0 International License (CC BY 4.0).
+
+You are free to share and adapt this material for any purpose, even
+commercially, as long as you give appropriate credit, provide a link to the
+license, and indicate if changes were made.
+
+Full license text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+This license covers the DATA only. The focuswatch-dataset software that
+produced this bundle is separately licensed (Apache-2.0); see that
+project's own repository and LICENSE file.
+"""
+
+
+def write_license(out: Path) -> None:
+    (out / "LICENSE").write_text(_DATA_LICENSE_TEXT)
+
+
 def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
     resources = [{"name": "sessions", "path": "sessions.csv", "format": "csv"}]
     for modality in S.MODALITIES:

@@ -1,0 +1,20 @@
+# Citation metadata for THIS CODE REPOSITORY (Apache-2.0). The published
+# dataset itself (CC BY 4.0) is a separate archive with its own citation -
+# see docs/DESIGN.md §10 for the license split and the data descriptor
+# article for the dataset DOI once it exists.
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+type: software
+title: focuswatch-dataset
+abstract: >-
+  Converts four heterogeneous wrist/head-IMU, pen and observer-annotation
+  capture pipelines into one canonical, physically validated Parquet dataset
+  for a journal data descriptor.
+license: Apache-2.0
+repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
+version: 0.1.0
+# PLACEHOLDER - not a real DOI. Zenodo mints one automatically on the first
+# tagged GitHub release once the Zenodo-GitHub integration (DESIGN §10) is
+# enabled; replace this whole `doi` line at that point, do not invent a value
+# before then.
+doi: 10.5281/zenodo.PLACEHOLDER
