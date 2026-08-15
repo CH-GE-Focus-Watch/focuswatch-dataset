@@ -45,17 +45,16 @@ import uuid
 from pathlib import Path
 
 from . import docs
+from . import schema as S
 from .adapters import base
 from .adapters.base import RecordingBundle
 from .manifest import build_channels, build_manifest, check_manifest_consistency
 from .redact import RedactionPolicy, redact_bundle
 from .validate import (
-    Finding, ValidationReport, check_coverage, validate_motion_table, validate_pen_table,
-    validate_recording,
+    Finding, ValidationReport, check_coverage, detect_dropouts, validate_motion_table,
+    validate_pen_table, validate_recording,
 )
 from .write import write_table
-
-_MOTION_MODALITIES = ("watch", "watch_rawaccel", "headimu")
 
 # Why: a directory carrying either of these is recognisably a previous build
 # of this package, not merely "something happens to live at this path" - both
@@ -93,7 +92,7 @@ def _git_sha() -> str:
 
 def _validate(bundle: RecordingBundle) -> list:
     findings = []
-    for modality in _MOTION_MODALITIES:
+    for modality in S.MOTION_MODALITIES:
         if modality in bundle.tables:
             nominal = bundle.meta.get("head_hz_nominal" if modality == "headimu"
                                       else "watch_hz_nominal")
@@ -263,7 +262,13 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
             bundles.append(bundle)
 
     manifest_preview = build_manifest(bundles)
-    gaps = check_coverage(manifest_preview, report.findings)
+    # Why (C4): computed once per bundle here, passed explicitly rather than
+    # re-derived inside check_coverage (which never receives bundle.tables) -
+    # the exact same computation manifest.build_manifest already ran to
+    # populate issue_codes, so the two can never disagree about which
+    # modality is a declared dropout.
+    dropouts = {b.ref.recording_id: detect_dropouts(b.tables) for b in bundles}
+    gaps = check_coverage(manifest_preview, report.findings, dropouts)
     # Why: computed once and used everywhere validation_report.json is
     # written or returned - report.findings alone (no synthetic coverage_gap
     # entries) must never diverge from what actually landed on disk, on

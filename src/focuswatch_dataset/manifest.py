@@ -43,6 +43,7 @@ Three guarantees this module exists to provide:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +52,7 @@ import pandas as pd
 from . import schema as S
 from .adapters.base import RecordingBundle
 from .time_axis import median_rate_hz
+from .validate import detect_dropouts
 
 MANIFEST_COLUMNS = (
     "recording_id", "participant_id", "cohort", "pipeline",
@@ -104,8 +106,12 @@ _DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
 # an adapter - excluding them here is what keeps a recording-level restatement
 # from ever being able to drift from the per-modality source of truth.
 _DERIVED_TIME_FIELDS = frozenset({"time_domain", "alignment_note"})
+# Why (C4): computed from detect_dropouts(bundle.tables), not declared by an
+# adapter - no adapter has (or should have) an opinion on its own coverage
+# ratio, so this is purely defensive against a future one trying to.
+_DERIVED_ISSUE_FIELDS = frozenset({"issue_codes"})
 _DERIVED_FIELDS = (_STRUCTURAL_FLAGS | _DERIVED_MEASURED_FIELDS
-                  | _DERIVED_TASK_COUNT_FIELDS | _DERIVED_TIME_FIELDS)
+                  | _DERIVED_TASK_COUNT_FIELDS | _DERIVED_TIME_FIELDS | _DERIVED_ISSUE_FIELDS)
 
 _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
@@ -268,6 +274,19 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
         by_modality = b.meta.get("time_domain_by_modality", {})
         row["time_domain"] = _primary_time_domain(by_modality)
         row["alignment_note"] = _alignment_note(row["time_alignment"], by_modality, row["time_domain"])
+
+        # Why (C4): derived from the tables, not restated - a modality below
+        # the coverage floor is published with the fact attached (sample
+        # count + ratio) rather than silently dropped or silently kept under
+        # the same word as a complete stream. Empty string, not "[]", when
+        # there is nothing to report - matches issue_codes' pre-existing
+        # default (_DEFAULTS above) and every other manifest string default.
+        dropouts = detect_dropouts(b.tables)
+        row["issue_codes"] = json.dumps([
+            {"code": "modality_dropout", "modality": m, "n_samples": d.n_samples,
+             "coverage_ratio": d.coverage_ratio}
+            for m, d in sorted(dropouts.items())
+        ]) if dropouts else ""
         rows.append(row)
 
     df = pd.DataFrame(rows)

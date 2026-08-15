@@ -190,6 +190,54 @@ def _table_span(df: pd.DataFrame) -> tuple[int, int] | None:
     return None
 
 
+@dataclass(frozen=True)
+class Dropout:
+    """A motion modality whose stream covers only a sliver of the recording (C4).
+
+    Not a defect to hide: the sensor genuinely disconnected early (or never
+    connected) and the samples that exist are real - see
+    ETH-SL-E3_session1's headimu (58 samples spanning 2.1 s inside an
+    8713.6 s recording). Declaring it exempts the modality from checks that
+    need a substantial span to mean anything (cross-modality overlap, and
+    the physics checks whose minimum-sample floors a sliver cannot clear)
+    without deleting the samples or hiding that it happened - see
+    detect_dropouts, validate_recording's streams_overlap exclusion, and
+    check_coverage's capability-check exemption.
+    """
+    modality: str
+    n_samples: int
+    coverage_ratio: float
+
+
+def detect_dropouts(tables: dict[str, pd.DataFrame]) -> dict[str, Dropout]:
+    """Motion modalities (schema.MOTION_MODALITIES) below the coverage floor.
+
+    The reference span is the enclosing span across the OTHER motion
+    modalities only, not every table in the recording - pen/markers/
+    attention timestamps can be wildly misaligned exactly when a merge is
+    genuinely broken (the streams_overlap failure this function must not
+    quietly absorb), and letting one of those inflate the denominator would
+    misclassify an ordinary motion table as a "dropout" instead of surfacing
+    the real alignment failure. Needs at least two motion modalities to
+    compare - with only one, there is nothing to be a sliver relative to.
+    """
+    motion_spans = {m: s for m, s in
+                    ((m, _table_span(tables[m])) for m in S.MOTION_MODALITIES if m in tables) if s}
+    if len(motion_spans) < 2:
+        return {}
+    lo = min(s[0] for s in motion_spans.values())
+    hi = max(s[1] for s in motion_spans.values())
+    total = hi - lo
+    if total <= 0:
+        return {}
+    out: dict[str, Dropout] = {}
+    for modality, (s_lo, s_hi) in motion_spans.items():
+        ratio = (s_hi - s_lo) / total
+        if ratio < S.DROPOUT_COVERAGE_RATIO_MIN:
+            out[modality] = Dropout(modality, len(tables[modality]), round(ratio, 6))
+    return out
+
+
 def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
                        meta: dict) -> list[Finding]:
     """Checks that only make sense across the tables of one recording."""
@@ -204,12 +252,25 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
         add("time_magnitude", modality, lo,
             "timestamps on the declared wall clock", _EPOCH_NS_MIN <= lo <= _EPOCH_NS_MAX)
 
-    if len(spans) > 1:
-        latest_start = max(lo for lo, _ in spans.values())
-        earliest_end = min(hi for _, hi in spans.values())
+    # C4: a declared dropout (schema.DROPOUT_COVERAGE_RATIO_MIN) is exempt
+    # from the overlap requirement - a sensor that disconnected 2 s into an
+    # 8713.6 s recording was never going to overlap the rest, and that is
+    # the dropout, not a second failure to report. Still gets its own
+    # informational Finding (never omitted, per DESIGN's "publish with the
+    # truth attached") so the fact is visible without failing the build.
+    dropouts = detect_dropouts(tables)
+    overlap_spans = {m: s for m, s in spans.items() if m not in dropouts}
+    if len(overlap_spans) > 1:
+        latest_start = max(lo for lo, _ in overlap_spans.values())
+        earliest_end = min(hi for _, hi in overlap_spans.values())
         overlap_s = (earliest_end - latest_start) / 1e9
-        add("streams_overlap", "+".join(sorted(spans)), round(overlap_s, 3),
+        add("streams_overlap", "+".join(sorted(overlap_spans)), round(overlap_s, 3),
             "modality time ranges overlap", overlap_s > 0)
+
+    for modality, d in dropouts.items():
+        add("modality_dropout", modality, f"{d.n_samples} samples, ratio {d.coverage_ratio}",
+            f"coverage ratio < {S.DROPOUT_COVERAGE_RATIO_MIN} - exempt from streams_overlap "
+            "and minimum-length capability checks (see check_coverage)", True)
 
     # Why: the declared session start, taken from the source's own session
     # metadata - not the computed span, which would make the check tautological.
@@ -302,7 +363,18 @@ _CAPABILITY_CHECKS = (
 )
 
 
-def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]:
+def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
+                   dropouts: dict[str, dict[str, Dropout]] | None = None) -> list[str]:
+    """`dropouts`: recording_id -> detect_dropouts(bundle.tables) (C4).
+
+    Optional and keyed by recording_id, not derived from `manifest` here -
+    `manifest` alone cannot recompute it (that needs the tables, which this
+    function never receives), so the caller (build.py) passes what it
+    already computed once per bundle. Absent or omitted for a recording
+    means no dropout, i.e. today's exact behaviour - existing callers that
+    never pass it are unaffected.
+    """
+    dropouts = dropouts or {}
     problems: list[str] = []
     by_recording_modality: dict[tuple[str, str], set[str]] = {}
     for f in findings:
@@ -310,6 +382,7 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
 
     for _, row in manifest.iterrows():
         rid = row["recording_id"]
+        rec_dropouts = dropouts.get(rid, {})
 
         def seen(modality: str) -> set[str]:
             return by_recording_modality.get((rid, modality), set())
@@ -333,10 +406,20 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
         # Head-Capabilities trio and describe the headimu stream.
         for flag, check in _CAPABILITY_CHECKS:
             if row.get(flag):
-                require(S.CAPABILITY_FLAG_MODALITY[flag], check, f"{flag} is true")
+                modality = S.CAPABILITY_FLAG_MODALITY[flag]
+                # Why (C4): a declared dropout's physics checks need a
+                # sample count no sliver can clear (quat_norm's explicit
+                # 100-sample floor today; the principle generalises to
+                # gravity_norm/gyro_range) - the narrow, "minimum-length"
+                # exemption named in the finding, not a blanket pass on the
+                # modality's base motion checks above.
+                if modality in rec_dropouts:
+                    continue
+                require(modality, check, f"{flag} is true")
         if row.get("has_quaternion"):
             modality = S.CAPABILITY_FLAG_MODALITY["has_quaternion"]
-            if not ({"quat_gravity_agreement", "quat_still_agreement"} & seen(modality)):
+            if (modality not in rec_dropouts
+                    and not ({"quat_gravity_agreement", "quat_still_agreement"} & seen(modality))):
                 problems.append(
                     f"{rid}/{modality}: neither quat_gravity_agreement nor quat_still_agreement ran "
                     "(has_quaternion is true)")

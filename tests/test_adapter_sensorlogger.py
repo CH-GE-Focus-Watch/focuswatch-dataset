@@ -9,14 +9,15 @@ from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.sensorlogger import SensorLoggerAdapter
 from focuswatch_dataset.manifest import build_channels, build_manifest
 from focuswatch_dataset.validate import (
-    check_coverage, validate_motion_table, validate_pen_table, validate_recording,
+    check_coverage, detect_dropouts, validate_motion_table, validate_pen_table, validate_recording,
 )
 
 T0_NS = 1780853585220_000_000
 
 
 def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pen=True,
-                  with_rawaccel=True, generation="B", participant_id="E2", handedness="right"):
+                  with_rawaccel=True, generation="B", participant_id="E2", handedness="right",
+                  head_rows=200):
     d = root / sid
     d.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(2)
@@ -38,16 +39,20 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
     }).to_csv(d / "WristMotion.csv", index=False)
 
     # Headphone gravity is always m/s2, independent of the standardisation flag.
+    # Why (C4): head_rows is independently settable (default 200, matching the
+    # historical fixture) so a dropout scenario (a headphone stream covering
+    # only a sliver of the recording, e.g. E3_session1's 58 samples/2.1s
+    # inside 8713.6s) can be built without perturbing every other test.
     pd.DataFrame({
-        "time": t[:200], "seconds_elapsed": np.arange(200) / 100,
+        "time": t[:head_rows], "seconds_elapsed": np.arange(head_rows) / 100,
         "rotationRateX": 0.01, "rotationRateY": 0.01, "rotationRateZ": 0.01,
-        "gravityX": grav[:200, 0] * S.G_TO_MS2, "gravityY": grav[:200, 1] * S.G_TO_MS2,
-        "gravityZ": grav[:200, 2] * S.G_TO_MS2,
-        "accelerationX": rng.normal(0, 0.02, 200) * scale,
-        "accelerationY": rng.normal(0, 0.02, 200) * scale,
-        "accelerationZ": rng.normal(0, 0.02, 200) * scale,
-        "quaternionW": q[:200, 3], "quaternionX": q[:200, 0],
-        "quaternionY": q[:200, 1], "quaternionZ": q[:200, 2],
+        "gravityX": grav[:head_rows, 0] * S.G_TO_MS2, "gravityY": grav[:head_rows, 1] * S.G_TO_MS2,
+        "gravityZ": grav[:head_rows, 2] * S.G_TO_MS2,
+        "accelerationX": rng.normal(0, 0.02, head_rows) * scale,
+        "accelerationY": rng.normal(0, 0.02, head_rows) * scale,
+        "accelerationZ": rng.normal(0, 0.02, head_rows) * scale,
+        "quaternionW": q[:head_rows, 3], "quaternionX": q[:head_rows, 0],
+        "quaternionY": q[:head_rows, 1], "quaternionZ": q[:head_rows, 2],
         "roll": 0.0, "pitch": 0.0, "yaw": 0.0, "devicelocation": "unknown",
     }).to_csv(d / "Headphone.csv", index=False)
 
@@ -550,3 +555,82 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
 
     assert check_coverage(manifest, findings) == []
+
+
+# --- C4: a dropped-out modality (ETH-SL-E3_session1's headimu) -------------
+#
+# Real measured case: Headphone.csv holds 58 rows spanning 2.1 s inside an
+# 8713.6 s recording (coverage ratio ~0.00024) - the head unit disconnected
+# 2 s in and never returned. The only two failures of the whole 983-check
+# real-corpus validity run were this recording's streams_overlap (headimu
+# has no overlap with watch) and quat_norm "never ran" (58 < the 100-sample
+# floor). This fixture reproduces the same SHAPE (a headimu stream far too
+# short relative to watch to mean anything physically) without claiming the
+# exact real ratio.
+
+def _dropout_fixture(tmp_path, sid="E3_session1"):
+    # n=3000 @ 10 ms -> 30 s watch span; head_rows=5 @ 10 ms -> 50 ms head
+    # span. Ratio ~0.0017 (0.17%), comfortably below DROPOUT_COVERAGE_RATIO_MIN
+    # (0.01) and comfortably below the smallest legitimate fixture coverage
+    # (Ege's headimu fixture, ~0.0497 - see schema.py's threshold comment).
+    write_fixture(tmp_path, sid=sid, n=3000, head_rows=5, with_rawaccel=False)
+    a = SensorLoggerAdapter()
+    ref = next(r for r in a.discover(tmp_path) if sid in r.recording_id)
+    return a, ref, a.load(ref)
+
+
+def test_headimu_dropout_ratio_is_measured_correctly(tmp_path):
+    _, _, bundle = _dropout_fixture(tmp_path)
+    dropouts = detect_dropouts(bundle.tables)
+    assert set(dropouts) == {"headimu"}
+    assert dropouts["headimu"].n_samples == 5
+    assert dropouts["headimu"].coverage_ratio < S.DROPOUT_COVERAGE_RATIO_MIN
+
+
+def test_headimu_dropout_is_exempt_from_overlap_and_never_ran_gaps(tmp_path):
+    """The real-corpus failure this item fixes: without the exemption,
+    validate_recording's streams_overlap fails outright (headimu genuinely
+    does not overlap watch) and check_coverage flags quat_norm/gravity_norm
+    as never-ran (58 samples cannot clear the 100-sample floor)."""
+    a, ref, bundle = _dropout_fixture(tmp_path)
+    manifest = build_manifest([bundle])
+    dropouts = {ref.recording_id: detect_dropouts(bundle.tables)}
+
+    findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch",
+                                     bundle.meta["watch_hz_nominal"])
+    findings += validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
+                                      bundle.meta["watch_hz_nominal"])
+    findings += validate_pen_table(bundle.tables["pen"], ref.recording_id)
+    findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
+
+    assert [f for f in findings if f.check == "streams_overlap"] == [] or \
+        all(f.passed for f in findings if f.check == "streams_overlap")
+    assert any(f.check == "modality_dropout" and f.modality == "headimu" and f.passed
+              for f in findings)
+    assert check_coverage(manifest, findings, dropouts) == []
+
+
+def test_headimu_dropout_without_the_dropouts_param_still_flags_the_gap(tmp_path):
+    """Backward-compatibility check: check_coverage's dropouts param is
+    optional - a caller that never passes it (every pre-C4 call site) must
+    keep seeing the quat_norm/gravity_norm gap, not silently start passing."""
+    a, ref, bundle = _dropout_fixture(tmp_path)
+    manifest = build_manifest([bundle])
+
+    findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch",
+                                     bundle.meta["watch_hz_nominal"])
+    findings += validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
+                                      bundle.meta["watch_hz_nominal"])
+    findings += validate_pen_table(bundle.tables["pen"], ref.recording_id)
+    findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
+
+    problems = check_coverage(manifest, findings)   # no dropouts param
+    assert any("headimu" in p and ("quat_norm" in p or "gravity_norm" in p) for p in problems)
+
+
+def test_manifest_issue_codes_reports_the_dropout(tmp_path):
+    _, _, bundle = _dropout_fixture(tmp_path)
+    row = build_manifest([bundle]).iloc[0]
+    issues = json.loads(row["issue_codes"])
+    assert issues == [{"code": "modality_dropout", "modality": "headimu",
+                       "n_samples": 5, "coverage_ratio": pytest.approx(0.001334, abs=1e-4)}]

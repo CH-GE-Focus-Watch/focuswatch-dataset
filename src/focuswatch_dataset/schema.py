@@ -73,6 +73,23 @@ ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
 
+# The three motion-table modalities a recording can carry (build.py's
+# validation dispatch and validate.detect_dropouts both key off this - one
+# table, not two kept in agreement by memory).
+MOTION_MODALITIES = ("watch", "watch_rawaccel", "headimu")
+
+# C4: a motion modality whose own span covers less than this fraction of the
+# recording's overall span is a DROPOUT (sensor disconnected early/never
+# returned), not a genuine stream - see validate.detect_dropouts. Measured
+# case (ETH-SL-E3_session1's headimu: 58 samples over 2.1 s inside an
+# 8713.6 s recording) sits at ratio ~0.00024, two orders of magnitude below
+# this threshold. 0.01 (1%) is chosen to sit comfortably above that measured
+# floor while staying safely below the smallest legitimate partial-coverage
+# case seen in the fixtures (Ege's headimu fixture: 1490 ms inside a 29990 ms
+# recording, ratio ~0.0497) - a merely imperfect stream must never be wrongly
+# exempted from its physics checks.
+DROPOUT_COVERAGE_RATIO_MIN = 0.01
+
 # Pen event vocabulary shared by both ETH pipelines (DESIGN §8.1). Both come
 # from the same web app but store its two export generations differently:
 # generation A (Ege's own CSV export; SensorLogger's S3/T8/T9/T10, which
