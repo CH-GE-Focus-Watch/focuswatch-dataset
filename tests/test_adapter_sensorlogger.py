@@ -321,6 +321,22 @@ def test_watch_hz_nominal_falls_back_to_measured_when_sample_rate_is_absent(tmp_
     assert rate_finding.observed == pytest.approx(100.0, rel=0.05)
 
 
+def test_annotation_csv_is_never_read(tmp_path):
+    """M14: Annotation.csv is genuinely zero-byte in the real export (e.g.
+    E3_session1) - phase markers and pen strokes live in the session JSON
+    instead (see module docstring). `pd.read_csv` raises `EmptyDataError` on
+    a zero-byte file, so if anything upstream ever opened it, load() would
+    raise too. write_fixture already writes it empty; this test just asserts
+    that stays true rather than being an accident nothing exercises.
+    """
+    write_fixture(tmp_path)
+    d = tmp_path / "E2_session6"
+    assert (d / "Annotation.csv").stat().st_size == 0
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert "watch" in bundle.tables
+
+
 def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     """End-to-end check_coverage regression (fix-round-3 item 3): the only
     adapter with such a test (AirPods) was the only adapter whose coverage
