@@ -9,14 +9,17 @@ Three guarantees this module exists to provide:
    modality/gravity/quaternion/gyro booleans that `check_coverage` gates on
    are recomputed here directly from `bundle.tables` column presence -
    never merely trusted from an adapter's own `meta` dict, which could in
-   principle disagree with the data it describes. Which flags these are
-   comes from `schema.CAPABILITY_FLAG_MODALITY`, the same table
-   `validate.check_coverage` reads its modality bindings from - so a flag
-   `check_coverage` starts gating on can never silently fall out of sync
-   with what this module derives from the tables (see `_DERIVED_FIELDS`).
-   The two measured-rate fields (`watch_hz_measured`, `head_hz_measured`)
-   get the identical treatment for the identical reason, even though they
-   are not booleans.
+   principle disagree with the data it describes. Which flags these are,
+   which table each looks in, and which column each looks for comes from
+   `schema.CAPABILITY_FLAG_MODALITY`/`schema.CAPABILITY_FLAG_COLUMN`, the
+   same tables `validate.check_coverage` reads its modality bindings from -
+   so a flag `check_coverage` starts gating on can never silently fall out
+   of sync with what this module derives from the tables (see
+   `_DERIVED_FIELDS` and the structural-flag loop in `build_manifest`,
+   which needs no per-flag line of its own). The two measured-rate fields
+   (`watch_hz_measured`, `head_hz_measured`) get the identical exclusion
+   treatment for the identical reason, even though they are not booleans
+   and so are not part of the shared flag tables.
 2. Every `bundle.meta` key is either published (`MANIFEST_COLUMNS`),
    deliberately kept internal (`_INTERNAL_META_KEYS`, e.g. the
    spill-guard-only `session_start_ns`), or fails the build loudly. A
@@ -164,17 +167,23 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
         # Structural flags: table/column presence, not meta - see module docstring.
         for m in S.MODALITIES:
             row[f"has_{m}"] = m in b.tables
+        # Capability sub-flags: same structural treatment, driven by
+        # S.CAPABILITY_FLAG_COLUMN (which column) paired with
+        # S.CAPABILITY_FLAG_MODALITY (which table) - not five literal lines.
+        # A flag added to those shared tables later is derived correctly here
+        # with no matching edit in this module; before this loop existed, a
+        # flag missing its own literal line fell through to _DEFAULTS' False
+        # regardless of what the data actually said (see fix round 2's
+        # mutation in the task report).
+        for flag, column in S.CAPABILITY_FLAG_COLUMN.items():
+            table = b.tables.get(S.CAPABILITY_FLAG_MODALITY[flag])
+            row[flag] = table is not None and column in table.columns
         watch = b.tables.get("watch")
         if watch is not None:
             row["watch_hz_measured"] = _rate(watch)
-            row["has_gravity"] = "gravity_x" in watch.columns
-            row["has_quaternion"] = "quat_x" in watch.columns
         head = b.tables.get("headimu")
         if head is not None:
             row["head_hz_measured"] = _rate(head)
-            row["has_head_gravity"] = "gravity_x" in head.columns
-            row["has_head_quaternion"] = "quat_x" in head.columns
-            row["has_head_gyro"] = "gyro_x" in head.columns
         row["n_writing_tasks"], row["n_idle_tasks"] = _task_counts(b.tables.get("markers"))
 
         # Everything else the adapter declared, excluding the fields just

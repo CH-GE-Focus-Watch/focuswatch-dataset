@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from focuswatch_dataset import manifest as manifest_module
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 from focuswatch_dataset.manifest import (
@@ -79,6 +80,22 @@ def test_channels_declare_a_unit_for_every_signal_column():
     assert set(ch[ch["column"] == "accel_user_x"]["unit"]) == {"g"}
 
 
+def test_channels_use_the_per_cohort_pen_unit_when_declared():
+    """Fix-round-2 item 2: test_channels_declare_a_unit_for_every_signal_column
+    uses bundle()'s default meta, which has no pen_xy_unit/pen_pressure_scale
+    - so it only ever exercises _describe_column's "device_native" fallback.
+    The whole point of item 6 (fix round 1) was that a recording that DOES
+    declare its own pen unit gets that unit in channels.parquet, not the
+    fallback. This proves the per-cohort branch actually fires.
+    """
+    b = bundle(pen_xy_unit="ncode_grid", pen_pressure_scale="moleskine_raw")
+    b.tables["pen"]["pressure"] = [300.0, 300.0]
+    ch = build_channels([b])
+    assert set(ch[ch["column"] == "x"]["unit"]) == {"ncode_grid"}
+    assert set(ch[ch["column"] == "y"]["unit"]) == {"ncode_grid"}
+    assert set(ch[ch["column"] == "pressure"]["unit"]) == {"moleskine_raw"}
+
+
 def test_consistency_flags_a_missing_file(tmp_path):
     m = build_manifest([bundle()])
     problems = check_manifest_consistency(m, tmp_path)
@@ -121,6 +138,34 @@ def test_manifest_built_from_a_real_bundle_drives_coverage_for_head_gyro():
     m = build_manifest([_head_bundle()])
     problems = check_coverage(m, findings=[])
     assert any("gyro_range" in p and "headimu" in p for p in problems)
+
+
+def test_a_flag_added_only_to_the_shared_tables_is_derived_with_no_new_manifest_py_line(monkeypatch):
+    """Fix-round-2 item 1: build_manifest's structural sub-flags come from a
+    loop over S.CAPABILITY_FLAG_COLUMN (paired with S.CAPABILITY_FLAG_
+    MODALITY for which table), not five literal lines. A synthetic flag
+    added only to those two shared tables - with no matching code added to
+    manifest.py, because the loop already covers it - must still be derived
+    correctly from whether its column is actually present. Before this
+    fix's loop existed, a flag with no literal line of its own always fell
+    through to _DEFAULTS' False, regardless of the data (verified by hand
+    in the task report: the pre-fix code returned False here even though a
+    real synthetic_x column was present).
+    """
+    monkeypatch.setattr(S, "CAPABILITY_FLAG_MODALITY",
+                        {**S.CAPABILITY_FLAG_MODALITY, "has_synthetic_capability": "watch"})
+    monkeypatch.setattr(S, "CAPABILITY_FLAG_COLUMN",
+                        {**S.CAPABILITY_FLAG_COLUMN, "has_synthetic_capability": "synthetic_x"})
+    monkeypatch.setattr(manifest_module, "MANIFEST_COLUMNS",
+                        manifest_module.MANIFEST_COLUMNS + ("has_synthetic_capability",))
+
+    with_column = bundle(rid="ML4SCS-S920")
+    with_column.tables["watch"]["synthetic_x"] = 1.0
+    without_column = bundle(rid="ML4SCS-S921")
+
+    m = build_manifest([with_column, without_column]).set_index("recording_id")
+    assert bool(m.loc["ML4SCS-S920", "has_synthetic_capability"]) is True
+    assert bool(m.loc["ML4SCS-S921", "has_synthetic_capability"]) is False
 
 
 def test_head_measured_rate_is_derived_not_copied():
@@ -211,6 +256,36 @@ def test_task_counts_are_none_with_no_markers_table_at_all():
     m = build_manifest([_head_bundle()]).iloc[0]  # AirPods-shaped: no markers table
     assert m["n_writing_tasks"] is None or (isinstance(m["n_writing_tasks"], float)
                                             and np.isnan(m["n_writing_tasks"]))
+
+
+def test_task_counts_none_survives_the_dataframe_round_trip():
+    """Fix-round-2 item 3: every task-count test above builds a manifest from
+    a single bundle, so the column stays object-dtype holding a real `None`
+    and never exercises the float64/NaN coercion the module docstring
+    claims for n_writing_tasks/n_idle_tasks - the same gap
+    test_nominal_hz_none_survives_the_dataframe_round_trip closes for
+    watch_hz_nominal. Mixing a real-count ML4SCS bundle with a None-count
+    AirPods-shaped bundle (no markers table at all) forces pandas to unify
+    the column to float64; the absent value must still read as absent via
+    pandas.notna, not as a truthy NaN a naive `if n_writing_tasks:` would
+    trip on.
+    """
+    with_tasks = bundle(rid="ML4SCS-S930")
+    with_tasks.tables["markers"] = _markers([("abschreiben", "writing"), ("pause1", "idle")])
+    without_tasks = _head_bundle(rid="AIRPODS-P930")
+
+    manifest = build_manifest([with_tasks, without_tasks])
+    row = manifest[manifest["recording_id"] == "AIRPODS-P930"].iloc[0]
+    n_writing = row["n_writing_tasks"]
+
+    assert isinstance(n_writing, float)
+    assert np.isnan(n_writing)
+    assert bool(n_writing) is True  # the trap: NaN is truthy in plain Python
+    assert pd.notna(n_writing) is False  # the safe check
+
+    with_row = manifest[manifest["recording_id"] == "ML4SCS-S930"].iloc[0]
+    assert with_row["n_writing_tasks"] == 1
+    assert with_row["n_idle_tasks"] == 1
 
 
 # --- Finding 2: None must survive the DataFrame round trip ---

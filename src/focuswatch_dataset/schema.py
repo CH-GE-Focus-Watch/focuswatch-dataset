@@ -81,3 +81,20 @@ CAPABILITY_FLAG_MODALITY: dict[str, str] = {
     "has_head_quaternion": "headimu",
     "has_head_gyro": "headimu",
 }
+
+# Which real column manifest.build_manifest checks for, within the table
+# CAPABILITY_FLAG_MODALITY names, to structurally derive a capability
+# sub-flag. Paired with CAPABILITY_FLAG_MODALITY rather than folded into it,
+# because the six has_<modality> flags in MODALITY_FLAGS need no column check
+# (table presence alone is the fact they describe) and keeping their value
+# type a plain modality string is what lets validate.check_coverage use
+# CAPABILITY_FLAG_MODALITY[flag] directly as a modality name. A flag added
+# here (and to CAPABILITY_FLAG_MODALITY) is derived by build_manifest with no
+# further code change - see that module's structural-flag loop.
+CAPABILITY_FLAG_COLUMN: dict[str, str] = {
+    "has_gravity": "gravity_x",
+    "has_quaternion": "quat_x",
+    "has_head_gravity": "gravity_x",
+    "has_head_quaternion": "quat_x",
+    "has_head_gyro": "gyro_x",
+}
