@@ -103,6 +103,23 @@ class EgeAdapter:
                 "watch": "backend_wall_clock", "headimu": "backend_wall_clock",
                 "pen": "backend_wall_clock", "markers": "backend_wall_clock",
             },
+            # Why (item 1, fix round C): src_t_session_ms (wherever it
+            # appears - pen_events.csv and events.csv both carry it) is a
+            # session-relative millisecond offset, not a wall-clock reading -
+            # no clock name would be honest for it. pen.src_timestamp is
+            # structurally present but always NaN for this generation-A
+            # source (no pen-device clock in the export, DESIGN §5.0); the
+            # domain it WOULD be on, were it ever populated, is the same
+            # physical thing SensorLogger's generation-B src_timestamp is -
+            # declared for schema consistency across the two pen adapters,
+            # not because Ege ever measures it.
+            "time_domain_by_column": {
+                ("watch", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+                ("headimu", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+                ("pen", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+                ("pen", "src_timestamp"): S.TIME_DOMAIN_PEN_DEVICE_CLOCK,
+                ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+            },
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web",
             "study_mode": "study",

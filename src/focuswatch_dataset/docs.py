@@ -185,6 +185,36 @@ _UNIT_VOCABULARY = (
     ("n/a", "no physical or source unit applies (e.g. a categorical id)."),
 )
 
+# Item 1 (fix round C): the FIVE terms manifest.build_channels uses to
+# override a src_-prefixed provenance column's `time_domain` away from its
+# modality's default (see schema.py's TIME_DOMAIN_* constants, the single
+# source these values come from). This is not the complete `time_domain`
+# vocabulary - a modality's own default is a free-form, per-adapter clock
+# name (`watch_capture_clock`, `server_wall_clock`, `backend_wall_clock`,
+# `device_wall_clock`, ...) naming a specific pipeline's clock, open-ended
+# by design - only the OVERRIDE terms below are a fixed set worth defining
+# once.
+_TIME_DOMAIN_OVERRIDE_VOCABULARY = (
+    (S.TIME_DOMAIN_PEN_DEVICE_CLOCK, "the pen hardware's own free-running clock - unaligned to "
+                                     "any wall clock in this bundle. Moleskine's own device clock "
+                                     "for ML4SCS, and SensorLogger generation-B's pen-event "
+                                     "clock (`payload.timestamp`) for ETH E1/E2/E3. Measured "
+                                     "~749-923 days off the modality's wall clock; metadata only, "
+                                     "never used to join or align."),
+    (S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS, "milliseconds since this recording's own session "
+                                               "start - not a wall-clock reading at all, so no "
+                                               "clock name would be honest."),
+    (S.TIME_DOMAIN_PHONE_WALL_CLOCK, "the iPhone bridge's own wall clock (ML4SCS "
+                                     "`src_phone_received_at`) - a third device, distinct from "
+                                     "both the watch capture clock and the server clock."),
+    (S.TIME_DOMAIN_NOT_A_CLOCK, "not a timestamp at all (e.g. ML4SCS `src_sequence`, a batch "
+                                "counter) - declaring it on a clock, including its own "
+                                "modality's, would be a category error."),
+    (S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK, "a free-running uptime clock (seconds since device "
+                                           "boot), never reset to a wall-clock epoch - AirPods "
+                                           "`src_sensor_timestamp_s`."),
+)
+
 # I5 (open question 4): the real Ege `pen_events.csv` header, measured
 # directly from the source - NOT `t_ms, x, y, force, tilt.x, tilt.y,
 # timestamp` as an earlier draft of docs/DESIGN.md assumed. Ege's export
@@ -199,15 +229,28 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
     # clock, pen/markers on the server clock) - the clock is only truthfully
     # named per (recording, modality) in channels.parquet's own `time_domain`
     # column, which the table below now includes.
+    # Item 1 (fix round C): C2's per-modality fix still stamped a
+    # provenance column with its modality's clock even where that column is
+    # demonstrably not on it (pen.src_timestamp published 749-923 days off
+    # the declared clock on the real corpus - whole-branch-review-2.md
+    # finding 1). manifest.build_channels now overrides `time_domain` per
+    # (modality, column) for those columns, so the sentence below - and the
+    # reading instruction it gives - is per (recording, modality, column),
+    # not just (recording, modality).
     lines = ["# Data dictionary", "",
              "Units are canonical across the bundle: acceleration and gravity in g,",
              "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
              "timestamps as int64 Unix nanoseconds. The clock each column is stamped on",
-             "is named per (recording, modality) in this table's `time_domain` column -",
-             "not by `sessions.parquet`'s recording-level `time_domain` alone, which names",
-             "only the primary motion stream's clock and can differ from other modalities",
-             "of the same recording. For a recording with `time_alignment =",
-             "\"estimated_delta\"`, read its `alignment_note` before assuming any two",
+             "is named per (recording, modality, column) in this table's `time_domain`",
+             "column - not by `sessions.parquet`'s recording-level `time_domain` alone,",
+             "which names only the primary motion stream's clock and can differ from",
+             "other modalities AND from a modality's own `src_`-prefixed provenance",
+             "columns, which are frequently on a different clock than the modality's own",
+             "canonical `t_ns`/`t_start_ns`/`t_end_ns` axis (e.g. a pen device's own",
+             "clock, or a session-relative offset rather than a wall clock at all - see",
+             "the Time domain vocabulary section below). For a recording with",
+             "`time_alignment = \"estimated_delta\"`, read its `alignment_note` before",
+             "assuming any two",
              "modalities share a clock: the offset between them is estimated but not",
              "published, and `pen_delta_sigma` is that estimate's confidence, not its value.", "",
              "Pen rows with `x = y = -1` are framing events without a position. They are",
@@ -217,6 +260,19 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
              "cell is one of:", "",
              "| value | meaning |", "|---|---|"]
     for value, meaning in _UNIT_VOCABULARY:
+        lines.append(f"| `{value}` | {meaning} |")
+
+    lines += [
+        "", "## Time domain vocabulary", "",
+        "A modality's own `time_domain` default (e.g. `watch_capture_clock`, "
+        "`server_wall_clock`, `backend_wall_clock`, `device_wall_clock`) names a specific "
+        "pipeline's clock and is open-ended by design, not a closed set. A `src_`-prefixed "
+        "provenance column can be on a genuinely different clock than its modality's own "
+        "canonical time axis, though, and gets an EXPLICIT per-column override in that case "
+        "(the Channels table below reflects it) - these five terms are that fixed, closed "
+        "override vocabulary:", "",
+        "| value | meaning |", "|---|---|"]
+    for value, meaning in _TIME_DOMAIN_OVERRIDE_VOCABULARY:
         lines.append(f"| `{value}` | {meaning} |")
 
     lines += [

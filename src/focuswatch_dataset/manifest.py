@@ -73,16 +73,16 @@ MANIFEST_COLUMNS = (
 # published: internal bookkeeping consumed elsewhere in the pipeline before
 # the manifest is built (session_start_ns feeds validate_recording's spill
 # guard; src_standardisation is SensorLogger's own audit trail for the unit
-# harmonisation it already applied). time_domain_by_modality and
-# unit_conversion_factor_by_column are the per-(modality[, column]) source of
-# truth build_channels reads (see build_channels below) and the recording-
-# level time_domain/alignment_note columns are derived from - structured
-# dicts, not scalars, so they can never be a manifest column themselves. A
-# key that is neither published nor listed here fails the build loudly - see
-# build_manifest.
+# harmonisation it already applied). time_domain_by_modality,
+# time_domain_by_column and unit_conversion_factor_by_column are the
+# per-(modality[, column]) source of truth build_channels reads (see
+# build_channels below) and the recording-level time_domain/alignment_note
+# columns are derived from - structured dicts, not scalars, so they can
+# never be a manifest column themselves. A key that is neither published nor
+# listed here fails the build loudly - see build_manifest.
 _INTERNAL_META_KEYS = frozenset({
     "session_start_ns", "src_standardisation",
-    "time_domain_by_modality", "unit_conversion_factor_by_column",
+    "time_domain_by_modality", "time_domain_by_column", "unit_conversion_factor_by_column",
     # Why (C5): a diagnostic count, not a bundle fact - surfaced as a
     # validate.py Finding (payload_keys_redacted) in validation_report.json,
     # not as a sessions.parquet column.
@@ -404,6 +404,17 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
     rows = []
     for b in bundles:
         by_modality = b.meta.get("time_domain_by_modality", {})
+        # Why (item 1, fix round C): a modality's declared time_domain is the
+        # clock its PRIMARY t_ns axis is on, not necessarily the clock every
+        # src_-prefixed provenance column is on - measured on the real corpus,
+        # ML4SCS's pen.src_timestamp published 749-923 days off the
+        # modality's declared clock (whole-branch-review-2.md finding 1). Same
+        # pattern as unit_conversion_factor_by_column: the adapter that
+        # produced the column states its domain at the point it produced it;
+        # this overrides the modality default ONLY where an adapter declared
+        # one, so a column no adapter has an opinion about still falls back to
+        # its modality's clock exactly as before.
+        column_domains = b.meta.get("time_domain_by_column", {})
         factors = b.meta.get("unit_conversion_factor_by_column", {})
         for modality, df in b.tables.items():
             hz = _rate(df)
@@ -418,7 +429,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
                     f"{b.ref.recording_id}/{modality}: no time_domain_by_modality entry - "
                     "the adapter must declare this modality's clock domain"
                 )
-            domain = by_modality[modality]
+            modality_domain = by_modality[modality]
             for column in df.columns:
                 q = col_to_quantity.get(column)
                 unit, semantics, frame = _describe_column(column, q, b.meta)
@@ -427,6 +438,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
                 # divided by G_TO_MS2. Absent from the map means the adapter
                 # applied no conversion to that column, which is 1.0 truthfully.
                 factor = factors.get((modality, column), 1.0)
+                domain = column_domains.get((modality, column), modality_domain)
                 rows.append({
                     "recording_id": b.ref.recording_id, "modality": modality, "column": column,
                     "quantity": q.value if q else ("time" if column in _TIME_COLUMNS else "other"),

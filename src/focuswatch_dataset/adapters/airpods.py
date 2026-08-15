@@ -168,6 +168,16 @@ class AirPodsAdapter:
             "time_domain_by_modality": {
                 "headimu": "device_wall_clock", "attention": "device_wall_clock",
             },
+            # Why (item 1, fix round C): src_sensor_timestamp_s is
+            # CMDeviceMotion's own free-running clock (seconds since device
+            # boot - see _load's comment on the column), never reset to a
+            # wall-clock epoch. headimu's canonical t_ns axis (from
+            # timestamp_iso) genuinely is on device_wall_clock; this
+            # provenance column is not, and declaring it so would be exactly
+            # finding 1's failure mode one recording earlier.
+            "time_domain_by_column": {
+                ("headimu", "src_sensor_timestamp_s"): S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK,
+            },
             "time_alignment": "shared_clock",
             "protocol_id": "airpods_attention",
             "study_mode": "study",

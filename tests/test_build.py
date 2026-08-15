@@ -812,6 +812,30 @@ def test_every_channels_unit_value_is_defined_in_the_glossary(tmp_path):
         assert f"`{value}`" in text
 
 
+def test_every_overridden_time_domain_value_is_defined_in_the_glossary(tmp_path):
+    """Item 1 (fix round C): the same discipline as the unit-vocabulary test
+    above, applied to time_domain_by_column's override terms - derive the
+    check from the built channels.parquet itself, not a second hardcoded
+    list, so the "Time domain vocabulary" section cannot drift from what the
+    adapters actually declared. A modality's own default clock name (e.g.
+    watch_capture_clock) is open-ended by design and excluded; only the
+    closed override vocabulary (schema.TIME_DOMAIN_*) must be defined.
+    """
+    from focuswatch_dataset import schema as S
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    channels = read_table(out / "channels.parquet")
+    text = (out / "data_dictionary.md").read_text()
+
+    override_values = {
+        v for k, v in vars(S).items()
+        if k.startswith("TIME_DOMAIN_") and isinstance(v, str)
+    }
+    assert override_values, "no schema.TIME_DOMAIN_* constants found"
+    for value in set(channels["time_domain"].unique()) & override_values:
+        assert f"`{value}`" in text
+
+
 def test_data_dictionary_disambiguates_pen_x_by_recording(tmp_path):
     """The channels summary lists `pen | x` once per distinct unit value with
     no way to tell which recording carries which - a per-recording table,

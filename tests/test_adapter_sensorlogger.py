@@ -458,6 +458,26 @@ def test_pen_comes_from_the_session_json(tmp_path):
     assert "src_timestamp" in pen.columns          # the pen device clock is kept as metadata
 
 
+def test_pen_provenance_columns_declare_their_own_clock_not_backend_wall_clock(tmp_path):
+    """Item 1 (fix round C): pen.src_timestamp is the pen hardware's own
+    free-running clock (~749 days off backend_wall_clock, measured on
+    ETH-SL-E2 - whole-branch-review-2.md finding 1), and src_t_session_ms is
+    a session-relative offset, not a wall-clock reading. The modality
+    default must still apply to every other column, including pen/'s own
+    t_ns axis.
+    """
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["time_domain"]
+
+    assert ch.loc[("pen", "src_timestamp")] == "pen_device_clock"
+    assert ch.loc[("pen", "src_t_session_ms")] == "session_relative_offset_ms"
+    assert ch.loc[("markers", "src_t_session_ms")] == "session_relative_offset_ms"
+    assert ch.loc[("pen", "t_ns")] == "backend_wall_clock"
+    assert ch.loc[("watch", "t_ns")] == "backend_wall_clock"
+
+
 def test_recording_without_strokes_has_no_pen_table(tmp_path):
     write_fixture(tmp_path, sid="focuswatch_T8_s1", with_pen=False)
     a = SensorLoggerAdapter()

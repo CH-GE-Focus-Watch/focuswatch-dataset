@@ -109,6 +109,26 @@ def test_channels_raises_when_a_modality_declares_a_blank_time_domain():
         build_channels([b])
 
 
+def test_channels_time_domain_column_override_wins_and_default_still_applies():
+    """Item 1 (fix round C): time_domain_by_column overrides the per-modality
+    default for the exact (modality, column) pair it names - following the
+    same pattern as unit_conversion_factor_by_column - and every OTHER
+    column in that modality (including its own t_ns axis) must keep getting
+    the modality default. A src_ provenance column can be on a genuinely
+    different clock than the modality's primary axis (whole-branch-
+    review-2.md finding 1): a naive fix that always used the override, or one
+    that dropped the default fallback, would each break one half of this.
+    """
+    b = bundle(time_domain_by_column={("pen", "src_timestamp"): "pen_device_clock"})
+    b.tables["pen"]["src_timestamp"] = [1.0, 2.0]
+    ch = build_channels([b]).set_index(["modality", "column"])["time_domain"]
+
+    assert ch.loc[("pen", "src_timestamp")] == "pen_device_clock"
+    assert ch.loc[("pen", "t_ns")] == "server_wall_clock"
+    assert ch.loc[("pen", "x")] == "server_wall_clock"
+    assert ch.loc[("watch", "t_ns")] == "watch_capture_clock"
+
+
 def test_channels_publish_device_native_for_pen_scale_columns_regardless_of_cohort():
     """Fix round C item 2: channels.parquet's `unit` cell for pen x/y/pressure
     must stay the closed-vocabulary "device_native" (DESIGN §6) no matter what

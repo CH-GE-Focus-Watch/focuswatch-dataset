@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters import base
 from focuswatch_dataset.adapters.ege import EgeAdapter
-from focuswatch_dataset.manifest import build_manifest
+from focuswatch_dataset.manifest import build_channels, build_manifest
 from focuswatch_dataset.validate import (
     check_coverage, validate_motion_table, validate_pen_table, validate_recording,
 )
@@ -144,6 +144,26 @@ def test_time_columns_are_split_correctly(tmp_path):
     assert bundle.tables["watch"]["t_ns"].iloc[0] == T0 * 1_000_000
     assert "src_t_session_ms" in bundle.tables["pen"].columns
     assert bundle.meta["time_alignment"] == "shared_clock"
+
+
+def test_src_t_session_ms_is_declared_as_an_offset_not_a_wall_clock(tmp_path):
+    """Item 1 (fix round C): src_t_session_ms is a session-relative
+    millisecond offset (0..800106 on this corpus, DESIGN §5.0), not a wall-
+    clock reading - no clock name would be honest for it. Both pen/ and
+    markers/ carry the column on this fixture (Ege's own imu_samples_rows.csv
+    has no t_session_ms, so watch/ never emits it here); the modality
+    default (backend_wall_clock) must still apply to every other column.
+    """
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["time_domain"]
+
+    assert ch.loc[("pen", "src_t_session_ms")] == "session_relative_offset_ms"
+    assert ch.loc[("markers", "src_t_session_ms")] == "session_relative_offset_ms"
+    assert ch.loc[("pen", "src_timestamp")] == "pen_device_clock"
+    assert ch.loc[("watch", "t_ns")] == "backend_wall_clock"
+    assert ch.loc[("pen", "t_ns")] == "backend_wall_clock"
 
 
 def test_pen_vocabulary_maps_to_canonical(tmp_path):

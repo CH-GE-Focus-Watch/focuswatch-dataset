@@ -20,6 +20,7 @@ def write_fixture(root, sid="S096", n=500, fs=100.0, gravity=True,
     watch = pd.DataFrame({
         "local_ts_ms": ts + 40, "session_id": sid, "sequence": np.arange(n),
         "sample_rate_hz": fs, "server_received_ms": ts + 50, "source": "watch",
+        "phone_received_at": ts + 45,
         "ts": ts,
         "ax": rng.normal(0, 0.04, n), "ay": rng.normal(0, 0.04, n), "az": rng.normal(0, 0.04, n),
         "rx": rng.normal(0, 0.15, n), "ry": rng.normal(0, 0.15, n), "rz": rng.normal(0, 0.15, n),
@@ -162,6 +163,34 @@ def test_pen_and_markers_are_declared_on_the_server_clock_not_the_watch_clock(tm
     assert watch_domain == "watch_capture_clock"
     assert pen_domain == markers_domain == "server_wall_clock"
     assert watch_domain != pen_domain
+
+
+def test_src_provenance_columns_are_declared_on_the_clock_they_are_actually_on(tmp_path):
+    """Item 1 (fix round C): C2 fixed the MODALITY-level clock (previous test)
+    but build_channels then stamped that same modality clock onto every
+    src_-prefixed provenance column too - measured false on the real corpus
+    (whole-branch-review-2.md finding 1): pen.src_timestamp is the raw
+    Moleskine device clock, ~923 days off server_wall_clock; watch.src_
+    local_ts_ms/src_server_received_ms are server-stamped, not the watch
+    capture clock the rest of watch/ is on; src_phone_received_at is a third
+    device's clock; src_sequence is not a clock at all.
+    """
+    write_fixture(tmp_path)
+    a = Ml4scsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["time_domain"]
+
+    assert ch.loc[("watch", "src_local_ts_ms")] == "server_wall_clock"
+    assert ch.loc[("watch", "src_server_received_ms")] == "server_wall_clock"
+    assert ch.loc[("watch", "src_phone_received_at")] == "phone_wall_clock"
+    assert ch.loc[("watch", "src_sequence")] == "not_a_clock"
+    assert ch.loc[("pen", "src_timestamp")] == "pen_device_clock"
+    assert ch.loc[("pen", "src_t_session_ms")] == "session_relative_offset_ms"
+    assert ch.loc[("markers", "src_t_session_ms")] == "session_relative_offset_ms"
+    # The modality default is unaffected for every other watch/ column - the
+    # override is scoped to the specific (modality, column) pairs above.
+    assert ch.loc[("watch", "t_ns")] == "watch_capture_clock"
+    assert ch.loc[("watch", "accel_user_x")] == "watch_capture_clock"
 
 
 def test_alignment_note_is_populated_for_the_estimated_delta_cohort(tmp_path):

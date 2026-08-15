@@ -168,6 +168,18 @@ class SensorLoggerAdapter:
                 "watch_rawaccel": "backend_wall_clock",
                 "pen": "backend_wall_clock", "markers": "backend_wall_clock",
             },
+            # Why (item 1, fix round C): pen.src_timestamp is the pen
+            # hardware's own free-running clock (~749 days off backend_wall_
+            # clock, measured on ETH-SL-E2 - whole-branch-review-2.md finding
+            # 1), populated for generation-B recordings and structurally NaN
+            # for generation A (same physical column as ml4scs.py's
+            # pen.src_timestamp and ege.py's). src_t_session_ms is a
+            # session-relative millisecond offset, not a wall-clock reading.
+            "time_domain_by_column": {
+                ("pen", "src_timestamp"): S.TIME_DOMAIN_PEN_DEVICE_CLOCK,
+                ("pen", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+                ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+            },
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web", "study_mode": "study",
             # Why (C3): follows the EXPORT GENERATION, not this pipeline

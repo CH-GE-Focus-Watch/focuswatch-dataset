@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.airpods import AirPodsAdapter, parse_ground_truth, parse_protocol
-from focuswatch_dataset.manifest import build_manifest
+from focuswatch_dataset.manifest import build_channels, build_manifest
 from focuswatch_dataset.validate import (
     check_coverage, validate_attention_table, validate_motion_table, validate_recording,
 )
@@ -90,6 +90,22 @@ def test_attention_table_holds_intervals_not_samples(tmp_path):
     assert list(att.columns) == ["t_start_ns", "t_end_ns", "label", "activity"]
     assert len(att) == 3
     assert att["t_end_ns"].iloc[0] - att["t_start_ns"].iloc[0] == 240 * 1_000_000_000
+
+
+def test_src_sensor_timestamp_declares_the_devices_own_monotonic_clock(tmp_path):
+    """Item 1 (fix round C): src_sensor_timestamp_s is CMDeviceMotion's own
+    free-running clock (seconds since device boot), never reset to a
+    wall-clock epoch - distinct from headimu's canonical t_ns axis (from
+    timestamp_iso), which genuinely is on device_wall_clock. The modality
+    default must still apply to t_ns itself.
+    """
+    write_fixture(tmp_path)
+    a = AirPodsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["time_domain"]
+
+    assert ch.loc[("headimu", "src_sensor_timestamp_s")] == "device_monotonic_clock"
+    assert ch.loc[("headimu", "t_ns")] == "device_wall_clock"
 
 
 # --- I13: activity, parsed from the sibling protocol file ------------------

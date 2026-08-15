@@ -148,6 +148,35 @@ MARKER_PAYLOAD_ALLOWED_KEYS = frozenset({
 # field, so nothing about this payload can be trusted to already be clean).
 HANDEDNESS_VALUES = ("left", "right", "unknown")
 
+# Item 1 (fix round C): time_domain vocabulary for src_-prefixed provenance
+# columns whose clock is NOT their modality's default (manifest.build_channels'
+# time_domain_by_column override, the same pattern as
+# unit_conversion_factor_by_column). Each adapter's per-modality default
+# (watch_capture_clock, server_wall_clock, backend_wall_clock,
+# device_wall_clock - declared inline in time_domain_by_modality, not
+# centralised here) names the clock the modality's PRIMARY t_ns axis is on;
+# these name the clock a specific provenance column is actually on, measured
+# against real corpus data (whole-branch-review-2.md finding 1):
+# pen.src_timestamp published 749-923 days off its modality's declared
+# clock. Centralised (not restated per adapter) because more than one
+# adapter's provenance columns are the identical physical thing under the
+# identical name.
+TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"
+# Why: not a clock reading at all - milliseconds SINCE session start, so no
+# wall-clock name would be honest. Emitted by every adapter that carries
+# `src_t_session_ms` (ML4SCS pen/markers, both ETH pipelines).
+TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS = "session_relative_offset_ms"
+TIME_DOMAIN_PHONE_WALL_CLOCK = "phone_wall_clock"
+# Why: a batch sequence counter (ML4SCS watch.src_sequence) carries no time
+# information at all - declaring it "on" any clock, including its own
+# modality's, would be a category error, not merely an imprecise one.
+TIME_DOMAIN_NOT_A_CLOCK = "not_a_clock"
+# Why: AirPods' src_sensor_timestamp_s is CMDeviceMotion's free-running
+# uptime clock (seconds since device boot), never reset to wall-clock epoch -
+# distinct from device_wall_clock, which headimu/attention's canonical t_ns
+# axis (from timestamp_iso) is actually on.
+TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK = "device_monotonic_clock"
+
 # Which modality's Finding stream a manifest capability flag gates. The single
 # source both validate.check_coverage (which physical checks a flag requires)
 # and manifest.build_manifest (which flags are recomputed from table/column

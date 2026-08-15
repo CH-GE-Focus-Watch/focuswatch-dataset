@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .. import schema as S
 from ..time_axis import sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
 
@@ -78,6 +79,28 @@ class Ml4scsAdapter:
                 "watch": "watch_capture_clock",
                 "pen": "server_wall_clock",
                 "markers": "server_wall_clock",
+            },
+            # Why (item 1, fix round C): the modality defaults above are each
+            # the PRIMARY t_ns axis's clock; these provenance columns are
+            # provably not on it. src_local_ts_ms/src_server_received_ms are
+            # both server-stamped (see _watch's comment on `ts` vs.
+            # `local_ts_ms`), not the watch capture clock the rest of
+            # `watch/` is on. src_phone_received_at is the iPhone bridge's
+            # own clock - a third device, not the server. src_sequence is a
+            # batch counter, not a timestamp at all - "not_a_clock" says so
+            # rather than implying it reads on any clock. pen.src_timestamp
+            # is the raw Moleskine device's own clock (see _pen below),
+            # ~923 days off server_wall_clock on this corpus (finding 1).
+            # src_t_session_ms is a session-relative offset, not a wall
+            # clock reading, on both pen and markers.
+            "time_domain_by_column": {
+                ("watch", "src_local_ts_ms"): "server_wall_clock",
+                ("watch", "src_server_received_ms"): "server_wall_clock",
+                ("watch", "src_phone_received_at"): S.TIME_DOMAIN_PHONE_WALL_CLOCK,
+                ("watch", "src_sequence"): S.TIME_DOMAIN_NOT_A_CLOCK,
+                ("pen", "src_timestamp"): S.TIME_DOMAIN_PEN_DEVICE_CLOCK,
+                ("pen", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
+                ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
             },
             "time_alignment": "estimated_delta",
             "protocol_id": f"ml4scs_{row.get('protocol_id')}",
