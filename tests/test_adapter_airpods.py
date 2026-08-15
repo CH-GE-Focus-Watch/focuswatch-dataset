@@ -163,23 +163,21 @@ def test_loaded_headimu_passes_the_validator(tmp_path):
 # not just the adapter's own opinion of itself.
 
 def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
+    """Hollow test #4 (fix round): this used to hand-build the manifest from
+    `bundle.meta` (see git history), the exact pattern the Ege and
+    SensorLogger equivalents were already fixed away from - AirPods was the
+    only adapter whose actual `build_manifest()` derivation path was never
+    exercised by a coverage test. build_manifest(), not a hand-picked dict of
+    flags: a hand-built manifest that forgets to name a flag (or, as here,
+    that never calls the real derivation at all) makes check_coverage
+    silently skip a requirement rather than fail it.
+    """
     write_fixture(tmp_path)
     a = AirPodsAdapter()
     ref = a.discover(tmp_path)[0]
     bundle = a.load(ref)
+    manifest = build_manifest([bundle])
 
-    manifest = pd.DataFrame([{
-        "recording_id": ref.recording_id,
-        "has_watch": bundle.meta["has_watch"],
-        "has_watch_rawaccel": bundle.meta["has_watch_rawaccel"],
-        "has_headimu": bundle.meta["has_headimu"],
-        "has_pen": bundle.meta["has_pen"],
-        "has_markers": bundle.meta["has_markers"],
-        "has_attention": bundle.meta["has_attention"],
-        "has_head_gravity": bundle.meta["has_head_gravity"],
-        "has_head_quaternion": bundle.meta["has_head_quaternion"],
-        "has_head_gyro": bundle.meta["has_head_gyro"],
-    }])
     findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
                                      bundle.meta["head_hz_nominal"])
     findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
@@ -227,3 +225,4 @@ def test_coverage_matrix_catches_a_stale_attention_flag_beside_a_real_headimu(tm
     findings += validate_recording(ref.recording_id, {"headimu": bundle.tables["headimu"]}, bundle.meta)
     problems = check_coverage(manifest, findings)
     assert any("time_magnitude" in p and "attention" in p for p in problems)
+

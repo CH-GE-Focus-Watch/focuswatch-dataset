@@ -26,7 +26,11 @@ def bundle(rid="ML4SCS-S096", with_pen=True, **meta):
                                       "x": [1.0, 2.0], "y": [1.0, 2.0]})
     base = {"watch_hz_nominal": 100.0, "accel_semantics": "user",
             "accel_calibration": "fused", "gravity_source": "none",
-            "time_domain": "watch_capture_clock", "time_alignment": "estimated_delta",
+            "time_domain_by_modality": {
+                "watch": "watch_capture_clock",
+                "pen": "server_wall_clock", "markers": "server_wall_clock",
+            },
+            "time_alignment": "estimated_delta",
             "protocol_id": "ml4scs_v2"}
     return RecordingBundle(RecordingRef(rid, "ML4SCS-P76", "ML4SCS", "ml4scs", Path(".")),
                            tables, base | meta)
@@ -49,7 +53,8 @@ def _head_bundle(rid="AIRPODS-P99", has_head_gyro_meta=True, n=200):
             # this value, it recomputes has_head_gyro from the table itself.
             "has_head_gyro": has_head_gyro_meta,
             "accel_semantics": "user", "accel_calibration": "fused",
-            "gravity_source": "none", "time_domain": "device_wall_clock",
+            "gravity_source": "none",
+            "time_domain_by_modality": {"headimu": "device_wall_clock"},
             "time_alignment": "shared_clock", "protocol_id": "airpods_attention",
         },
     )

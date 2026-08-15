@@ -56,18 +56,24 @@ def _watch_hz_nominal(meta_path: Path) -> float | None:
     return 1000.0 / ms if ms > 0 else None
 
 
-def _harmonise_gravity_to_g(xyz: np.ndarray) -> np.ndarray:
+def _harmonise_gravity_to_g(xyz: np.ndarray) -> tuple[np.ndarray, float]:
     """Convert a gravity column to g if its measured magnitude shows it is m/s2.
 
     Gated on the measured norm, never on which table produced the column: the
     wrist stream is in g or m/s2 depending on `standardisation`, the headphone
     stream is documented as always m/s2. A magnitude check treats both the
     same way and is idempotent, so an already-g column is never divided twice.
+
+    Returns the harmonised array AND the factor actually applied (1.0 or
+    1/G_TO_MS2) - this is a per-recording runtime decision (the same adapter
+    code can go either way depending on the measured magnitude), so C1's
+    published unit_conversion_factor has to come from here, not be
+    re-declared as a constant beside it.
     """
     median_norm = float(np.median(np.linalg.norm(xyz, axis=1)))
     if median_norm > S.GRAVITY_SI_NORM_THRESHOLD:
-        return xyz / S.G_TO_MS2
-    return xyz
+        return xyz / S.G_TO_MS2, 1.0 / S.G_TO_MS2
+    return xyz, 1.0
 
 
 class SensorLoggerAdapter:
@@ -86,15 +92,26 @@ class SensorLoggerAdapter:
         # dividing by G_TO_MS2 harmonises back to g; off means it is already g.
         accel_factor = 1.0 / S.G_TO_MS2 if si else 1.0
 
-        tables = {"watch": self._motion(d / "WristMotion.csv", accel_factor)}
+        watch_df, watch_factors = self._motion(d / "WristMotion.csv", accel_factor)
+        tables = {"watch": watch_df}
+        # Why (C1): keyed by (modality, column) - the factor actually applied,
+        # per the brief's shape. Populated as each table is built, right next
+        # to the division it records, so it cannot drift from what happened.
+        column_factors: dict[tuple[str, str], float] = {
+            ("watch", c): f for c, f in watch_factors.items()
+        }
 
         head = d / "Headphone.csv"
         if head.exists():
-            tables["headimu"] = self._motion(head, accel_factor)
+            head_df, head_factors = self._motion(head, accel_factor)
+            tables["headimu"] = head_df
+            column_factors.update({("headimu", c): f for c, f in head_factors.items()})
 
         rawaccel = d / "WatchAccelerometerUncalibrated.csv"
         if rawaccel.exists():
-            tables["watch_rawaccel"] = self._rawaccel(rawaccel, accel_factor)
+            rawaccel_df, rawaccel_factors = self._rawaccel(rawaccel, accel_factor)
+            tables["watch_rawaccel"] = rawaccel_df
+            column_factors.update({("watch_rawaccel", c): f for c, f in rawaccel_factors.items()})
 
         pen, markers = self._from_session_json(d)
         if pen is not None:
@@ -118,10 +135,19 @@ class SensorLoggerAdapter:
             "has_pen": "pen" in tables,
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",
-            "time_domain": "backend_wall_clock", "time_alignment": "shared_clock",
+            # Why (C2): this backend stamps every modality on the same wall
+            # clock (DESIGN §5.0's shared_clock regime) - declared per
+            # modality, like the ege adapter, not once for the whole recording.
+            "time_domain_by_modality": {
+                "watch": "backend_wall_clock", "headimu": "backend_wall_clock",
+                "watch_rawaccel": "backend_wall_clock",
+                "pen": "backend_wall_clock", "markers": "backend_wall_clock",
+            },
+            "time_alignment": "shared_clock",
             "protocol_id": "eth_web", "study_mode": "study",
             "pen_xy_unit": "webapp_raw", "pen_pressure_scale": "webapp_force",
             "src_standardisation": si,
+            "unit_conversion_factor_by_column": column_factors,
             "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
         }
         return RecordingBundle(ref, tables, meta)
@@ -131,7 +157,7 @@ class SensorLoggerAdapter:
         epoch_ms = pd.read_csv(meta_path)["recording epoch time"].iloc[0]
         return int(epoch_ms) * 1_000_000 if pd.notna(epoch_ms) else None
 
-    def _motion(self, path: Path, accel_factor: float) -> pd.DataFrame:
+    def _motion(self, path: Path, accel_factor: float) -> tuple[pd.DataFrame, dict[str, float]]:
         raw = pd.read_csv(path)
         # Why: `time` is already int64 Unix nanoseconds - to_unix_ns takes the
         # integer path here and performs no float64 scaling.
@@ -141,17 +167,24 @@ class SensorLoggerAdapter:
             * accel_factor)
         out[list(S.COLUMNS[S.Quantity.GYRO])] = (
             raw[["rotationRateX", "rotationRateY", "rotationRateZ"]].astype(float).to_numpy())
-        out[list(S.COLUMNS[S.Quantity.GRAVITY])] = _harmonise_gravity_to_g(
+        gravity, gravity_factor = _harmonise_gravity_to_g(
             raw[["gravityX", "gravityY", "gravityZ"]].astype(float).to_numpy())
+        out[list(S.COLUMNS[S.Quantity.GRAVITY])] = gravity
         out[list(S.COLUMNS[S.Quantity.QUAT])] = (
             raw[["quaternionX", "quaternionY", "quaternionZ", "quaternionW"]].astype(float).to_numpy())
-        return sort_stable_by_time(out)
+        # Why (C1): gyro and quaternion columns are never scaled - 1.0 for them
+        # is the true identity factor, not a placeholder. Only acceleration and
+        # gravity carry a possibly-non-1.0 factor.
+        factors = {c: accel_factor for c in S.COLUMNS[S.Quantity.ACCEL_USER]}
+        factors.update({c: gravity_factor for c in S.COLUMNS[S.Quantity.GRAVITY]})
+        return sort_stable_by_time(out), factors
 
-    def _rawaccel(self, path: Path, factor: float) -> pd.DataFrame:
+    def _rawaccel(self, path: Path, factor: float) -> tuple[pd.DataFrame, dict[str, float]]:
         raw = pd.read_csv(path)
         out = pd.DataFrame({"t_ns": to_unix_ns(raw["time"].to_numpy(), "ns")})
         out[list(S.COLUMNS[S.Quantity.ACCEL_TOTAL])] = raw[["x", "y", "z"]].astype(float).to_numpy() * factor
-        return sort_stable_by_time(out)
+        factors = {c: factor for c in S.COLUMNS[S.Quantity.ACCEL_TOTAL]}
+        return sort_stable_by_time(out), factors
 
     def _from_session_json(self, d: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
         candidates = list(d.glob("*.json"))

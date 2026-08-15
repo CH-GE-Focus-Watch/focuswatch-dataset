@@ -77,7 +77,15 @@ class EgeAdapter:
             "accel_calibration": "raw_uncalibrated",
             "accel_still_bias": self._still_bias(watch),
             "gravity_source": "none",
-            "time_domain": "backend_wall_clock",
+            # Why (C2): the backend stamps every modality on the same wall
+            # clock for this cohort (DESIGN §5.0's shared_clock regime), so
+            # every table this adapter emits gets the identical domain -
+            # declared per modality anyway, so a future modality with a
+            # genuinely different clock cannot inherit this one by omission.
+            "time_domain_by_modality": {
+                "watch": "backend_wall_clock", "headimu": "backend_wall_clock",
+                "pen": "backend_wall_clock", "markers": "backend_wall_clock",
+            },
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web",
             "study_mode": "study",

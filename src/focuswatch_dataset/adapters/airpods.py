@@ -130,7 +130,15 @@ class AirPodsAdapter:
             # watch_hz_measured), so a value asserted here would only ever be
             # dead weight at best or a silently-overridden lie at worst.
             "head_hz_nominal": None,
-            "time_domain": "device_wall_clock",
+            # Why (C2): the attention intervals are anchored to this same
+            # head-IMU sample clock (_attention's t0 = t_ns.min(), verified
+            # against the source's own per-sample label column by
+            # _verify_expansion before that column is dropped) - so both
+            # modalities this adapter emits share device_wall_clock, declared
+            # per modality rather than once for the whole recording.
+            "time_domain_by_modality": {
+                "headimu": "device_wall_clock", "attention": "device_wall_clock",
+            },
             "time_alignment": "shared_clock",
             "protocol_id": "airpods_attention",
             "study_mode": "study",

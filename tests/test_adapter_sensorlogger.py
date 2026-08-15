@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.sensorlogger import SensorLoggerAdapter
-from focuswatch_dataset.manifest import build_manifest
+from focuswatch_dataset.manifest import build_channels, build_manifest
 from focuswatch_dataset.validate import (
     check_coverage, validate_motion_table, validate_pen_table, validate_recording,
 )
@@ -100,6 +100,49 @@ def test_units_are_harmonised_to_g_when_standardisation_is_on(tmp_path):
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
     norm = np.linalg.norm(watch[list(S.COLUMNS[S.Quantity.GRAVITY])].to_numpy(), axis=1)
     assert np.allclose(norm, 1.0, atol=1e-6)
+
+
+def test_standardisation_on_harmonises_acceleration_and_rawaccel_to_g(tmp_path):
+    """H1: the only prior standardisation=True test (above) asserts the
+    GRAVITY norm, which `_harmonise_gravity_to_g` derives from the measured
+    magnitude and is independent of `accel_factor` (finding I1) - replacing
+    sensorlogger.py's `accel_factor = 1.0 / S.G_TO_MS2 if si else 1.0` with a
+    hardcoded `1.0` left 213/213 green under the old suite. This asserts the
+    branch that flag actually controls: watch `accel_user_*` and
+    `watch_rawaccel`'s `accel_total_*`.
+    """
+    write_fixture(tmp_path, standardisation=True)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+
+    watch = bundle.tables["watch"]
+    accel_norm = np.linalg.norm(watch[list(S.COLUMNS[S.Quantity.ACCEL_USER])].to_numpy(), axis=1)
+    assert np.median(accel_norm) <= S.ACCEL_USER_BAND[1]
+
+    rawaccel = bundle.tables["watch_rawaccel"]
+    raw_norm = np.linalg.norm(rawaccel[list(S.COLUMNS[S.Quantity.ACCEL_TOTAL])].to_numpy(), axis=1)
+    assert S.ACCEL_TOTAL_BAND[0] <= np.median(raw_norm) <= S.ACCEL_TOTAL_BAND[1]
+
+
+def test_unit_conversion_factor_is_recorded_per_column_not_restated(tmp_path):
+    """C1: manifest.py used to hardcode unit_conversion_factor=1.0 for every
+    channel regardless of what the adapter actually divided by - false
+    provenance for all 7 SensorLogger recordings (headphone gravity is
+    always divided by G_TO_MS2 per the app's documented behaviour;
+    standardisation gates whether the wrist stream also is). With
+    standardisation=False the wrist stream's own gravity is untouched
+    (factor 1.0) while the SAME recording's headphone gravity is still
+    divided (factor 1/G_TO_MS2) - one recording, two true factors for the
+    same channel name, which a single restated constant cannot express.
+    """
+    write_fixture(tmp_path, standardisation=False)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["unit_conversion_factor"]
+
+    assert ch.loc[("watch", "accel_user_x")] == pytest.approx(1.0)
+    assert ch.loc[("watch", "gravity_x")] == pytest.approx(1.0)
+    assert ch.loc[("headimu", "gravity_x")] == pytest.approx(1.0 / S.G_TO_MS2)
 
 
 def test_headphone_gravity_is_divided_even_when_standardisation_is_off(tmp_path):

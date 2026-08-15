@@ -71,9 +71,17 @@ MANIFEST_COLUMNS = (
 # published: internal bookkeeping consumed elsewhere in the pipeline before
 # the manifest is built (session_start_ns feeds validate_recording's spill
 # guard; src_standardisation is SensorLogger's own audit trail for the unit
-# harmonisation it already applied). A key that is neither published nor
-# listed here fails the build loudly - see build_manifest.
-_INTERNAL_META_KEYS = frozenset({"session_start_ns", "src_standardisation"})
+# harmonisation it already applied). time_domain_by_modality and
+# unit_conversion_factor_by_column are the per-(modality[, column]) source of
+# truth build_channels reads (see build_channels below) and the recording-
+# level time_domain/alignment_note columns are derived from - structured
+# dicts, not scalars, so they can never be a manifest column themselves. A
+# key that is neither published nor listed here fails the build loudly - see
+# build_manifest.
+_INTERNAL_META_KEYS = frozenset({
+    "session_start_ns", "src_standardisation",
+    "time_domain_by_modality", "unit_conversion_factor_by_column",
+})
 
 # Why: these are the flags check_coverage gates required physical checks on -
 # schema.CAPABILITY_FLAG_MODALITY is the single table both modules read them
@@ -87,7 +95,13 @@ _INTERNAL_META_KEYS = frozenset({"session_start_ns", "src_standardisation"})
 _STRUCTURAL_FLAGS = frozenset(S.CAPABILITY_FLAG_MODALITY)
 _DERIVED_MEASURED_FIELDS = frozenset({"watch_hz_measured", "head_hz_measured"})
 _DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
-_DERIVED_FIELDS = _STRUCTURAL_FLAGS | _DERIVED_MEASURED_FIELDS | _DERIVED_TASK_COUNT_FIELDS
+# Why: both are computed from meta["time_domain_by_modality"] (see
+# _primary_time_domain/_alignment_note below), not declared independently by
+# an adapter - excluding them here is what keeps a recording-level restatement
+# from ever being able to drift from the per-modality source of truth.
+_DERIVED_TIME_FIELDS = frozenset({"time_domain", "alignment_note"})
+_DERIVED_FIELDS = (_STRUCTURAL_FLAGS | _DERIVED_MEASURED_FIELDS
+                  | _DERIVED_TASK_COUNT_FIELDS | _DERIVED_TIME_FIELDS)
 
 _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "delta_applied": False,
@@ -149,6 +163,48 @@ def _task_counts(markers: pd.DataFrame | None) -> tuple[int | None, int | None]:
     return int((cats == "writing").sum()), int((cats == "idle").sum())
 
 
+# Why: the recording-level time_domain column (DESIGN §7) names the primary
+# motion stream's clock - watch when a recording has one, headimu for the
+# watch-less AirPods cohort. Picking from time_domain_by_modality rather than
+# trusting a second, independently-declared adapter key is what makes this
+# column DERIVED instead of a restatement that can drift from it.
+_PRIMARY_TIME_DOMAIN_MODALITIES = ("watch", "headimu")
+
+
+def _primary_time_domain(by_modality: dict[str, str]) -> str:
+    for m in _PRIMARY_TIME_DOMAIN_MODALITIES:
+        if m in by_modality:
+            return by_modality[m]
+    return ""
+
+
+def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary: str) -> str:
+    """Explicit warning for every estimated_delta recording (C2).
+
+    Computed from time_domain_by_modality, not hand-written per adapter: a
+    modality whose declared clock differs from the primary one is named here
+    automatically, so the sentence cannot go stale if a cohort's per-modality
+    domains change. See docs/DESIGN.md §5.0 - ML4SCS is the only
+    estimated_delta cohort today (pen/markers on the server clock, watch on
+    its own capture clock), but the derivation does not hardcode that.
+    """
+    if time_alignment != "estimated_delta":
+        return ""
+    differing = sorted(m for m, d in by_modality.items() if d and d != primary)
+    if not differing:
+        return ""
+    domains = sorted({by_modality[m] for m in differing})
+    return (
+        f"{', '.join(differing)} timestamps are on {' / '.join(domains)}, not the "
+        f"{primary!r} clock the primary motion stream uses (see channels.parquet's "
+        "time_domain column for the per-modality declaration). The offset between "
+        "the clocks is estimated but not applied or published: pen_delta_s is left "
+        "NaN by design (publishing an estimated delta risks irreparable "
+        "mislabeling); pen_delta_sigma is only the estimate's confidence, not the "
+        "offset itself."
+    )
+
+
 def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
     rows = []
     for b in bundles:
@@ -197,6 +253,14 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
             k: v for k, v in b.meta.items()
             if k not in _DERIVED_FIELDS and k not in _INTERNAL_META_KEYS
         })
+
+        # time_domain / alignment_note (C2): derived from
+        # time_domain_by_modality, computed after the meta merge above so
+        # row["time_alignment"] (an ordinary declared field, unaffected by
+        # this fix) is already in place.
+        by_modality = b.meta.get("time_domain_by_modality", {})
+        row["time_domain"] = _primary_time_domain(by_modality)
+        row["alignment_note"] = _alignment_note(row["time_alignment"], by_modality, row["time_domain"])
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -292,20 +356,38 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
     col_to_quantity = {c: q for q, cols in S.COLUMNS.items() for c in cols}
     rows = []
     for b in bundles:
+        by_modality = b.meta.get("time_domain_by_modality", {})
+        factors = b.meta.get("unit_conversion_factor_by_column", {})
         for modality, df in b.tables.items():
             hz = _rate(df)
+            # Why (C2): time_domain is per-modality, not restated once for the
+            # whole recording - a missing entry is an adapter bug (an emitted
+            # table with no declared clock), not a case to paper over with a
+            # blank cell the way _describe_column refuses to for unit/semantics.
+            if modality not in by_modality:
+                raise ValueError(
+                    f"{b.ref.recording_id}/{modality}: no time_domain_by_modality entry - "
+                    "the adapter must declare this modality's clock domain"
+                )
+            domain = by_modality[modality]
             for column in df.columns:
                 q = col_to_quantity.get(column)
                 unit, semantics, frame = _describe_column(column, q, b.meta)
+                # Why (C1): the factor actually applied, per (modality, column) -
+                # not restated as a fixed 1.0 beside an adapter that may have
+                # divided by G_TO_MS2. Absent from the map means the adapter
+                # applied no conversion to that column, which is 1.0 truthfully.
+                factor = factors.get((modality, column), 1.0)
                 rows.append({
                     "recording_id": b.ref.recording_id, "modality": modality, "column": column,
                     "quantity": q.value if q else ("time" if column in _TIME_COLUMNS else "other"),
                     "unit": unit, "semantics": semantics, "frame": frame,
-                    "sample_rate_hz": hz, "unit_conversion_factor": 1.0,
+                    "sample_rate_hz": hz, "unit_conversion_factor": factor,
+                    "time_domain": domain,
                 })
     return pd.DataFrame(rows, columns=[
         "recording_id", "modality", "column", "quantity", "unit", "semantics", "frame",
-        "sample_rate_hz", "unit_conversion_factor",
+        "sample_rate_hz", "unit_conversion_factor", "time_domain",
     ])
 
 

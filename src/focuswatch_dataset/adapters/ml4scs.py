@@ -67,7 +67,17 @@ class Ml4scsAdapter:
             "accel_semantics": "user",
             "accel_calibration": "fused",
             "gravity_source": "measured" if "gravity_x" in watch.columns else "none",
-            "time_domain": "watch_capture_clock",
+            # Why (C2): watch samples are timestamped from the watch's own
+            # capture clock (`ts`, see _watch below); pen and markers come
+            # from `local_ts_ms`/`timestamp_ms` - both the SERVER clock, a
+            # different clock entirely. Declaring one flat time_domain for
+            # the whole recording (the pre-fix bug) silently mislabels pen
+            # and marker timestamps as if they shared the watch's clock.
+            "time_domain_by_modality": {
+                "watch": "watch_capture_clock",
+                "pen": "server_wall_clock",
+                "markers": "server_wall_clock",
+            },
             "time_alignment": "estimated_delta",
             "protocol_id": f"ml4scs_{row.get('protocol_id')}",
             "study_mode": row.get("study_mode"),

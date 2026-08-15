@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.ml4scs import Ml4scsAdapter
+from focuswatch_dataset.manifest import build_channels, build_manifest
 from focuswatch_dataset.validate import validate_motion_table
 
 
@@ -139,6 +140,48 @@ def test_pen_delta_sigma_reaches_metadata(tmp_path):
     a = Ml4scsAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
     assert bundle.meta["pen_delta_sigma"] == pytest.approx(-3.3)
+
+
+def test_pen_and_markers_are_declared_on_the_server_clock_not_the_watch_clock(tmp_path):
+    """C2 part 1: watch samples are timestamped from `ts` (the watch's own
+    capture clock); pen comes from `local_ts_ms` and markers from
+    `timestamp_ms` - both the SERVER clock, a different clock entirely (see
+    _watch/_pen/_markers). Declaring one flat time_domain for the whole
+    recording (the pre-fix bug) silently mislabels pen/marker timestamps as
+    if they shared the watch's clock. channels.parquet's per-(recording,
+    modality) time_domain column must disagree between watch and pen/markers.
+    """
+    write_fixture(tmp_path)
+    a = Ml4scsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    ch = build_channels([bundle]).set_index(["modality", "column"])["time_domain"]
+
+    watch_domain = ch.loc[("watch", "t_ns")]
+    pen_domain = ch.loc[("pen", "t_ns")]
+    markers_domain = ch.loc[("markers", "t_ns")]
+    assert watch_domain == "watch_capture_clock"
+    assert pen_domain == markers_domain == "server_wall_clock"
+    assert watch_domain != pen_domain
+
+
+def test_alignment_note_is_populated_for_the_estimated_delta_cohort(tmp_path):
+    """C2 part 2: alignment_note was always "" (manifest.py's only mention of
+    it is the default) - a reuser had no explicit warning that pen/marker
+    timestamps sit on a different, unpublished-offset clock. Every
+    estimated_delta recording (currently ML4SCS only) must get a non-empty
+    note naming the differing modalities, and pen_delta_s stays NaN (D5:
+    publishing an estimated delta risks irreparable mislabeling).
+    """
+    write_fixture(tmp_path)
+    a = Ml4scsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    row = build_manifest([bundle]).iloc[0]
+
+    assert row["time_alignment"] == "estimated_delta"
+    assert row["alignment_note"] != ""
+    assert "pen" in row["alignment_note"] and "markers" in row["alignment_note"]
+    assert "pen_delta_sigma" in row["alignment_note"]
+    assert math.isnan(row["pen_delta_s"])
 
 
 def test_missing_alignment_sigma_yields_nan_not_a_baked_in_delta(tmp_path):

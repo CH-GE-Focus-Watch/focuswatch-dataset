@@ -29,17 +29,30 @@ def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame)
 
 
 def write_data_dictionary(out: Path, channels: pd.DataFrame) -> None:
+    # C2: the old sentence named a single recording-level `time_domain` as
+    # covering every timestamp in a recording. False for any cohort whose
+    # modalities are not all on one clock (ML4SCS: watch on its own capture
+    # clock, pen/markers on the server clock) - the clock is only truthfully
+    # named per (recording, modality) in channels.parquet's own `time_domain`
+    # column, which the table below now includes.
     lines = ["# Data dictionary", "",
              "Units are canonical across the bundle: acceleration and gravity in g,",
              "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
-             "timestamps as int64 Unix nanoseconds on the clock named by `time_domain`.", "",
+             "timestamps as int64 Unix nanoseconds. The clock each column is stamped on",
+             "is named per (recording, modality) in this table's `time_domain` column -",
+             "not by `sessions.parquet`'s recording-level `time_domain` alone, which names",
+             "only the primary motion stream's clock and can differ from other modalities",
+             "of the same recording. For a recording with `time_alignment =",
+             "\"estimated_delta\"`, read its `alignment_note` before assuming any two",
+             "modalities share a clock: the offset between them is estimated but not",
+             "published, and `pen_delta_sigma` is that estimate's confidence, not its value.", "",
              "Pen rows with `x = y = -1` are framing events without a position. They are",
              "retained deliberately; treating them as measurements skews any positional statistic.", ""]
-    summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics"])
+    summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))
-    lines += ["| modality | column | quantity | unit | semantics | recordings |",
-              "|---|---|---|---|---|---|"]
+    lines += ["| modality | column | quantity | unit | semantics | time_domain | recordings |",
+              "|---|---|---|---|---|---|---|"]
     for _, r in summary.iterrows():
         lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
-                     f"{r.semantics} | {r.recordings} |")
+                     f"{r.semantics} | {r.time_domain} | {r.recordings} |")
     (out / "data_dictionary.md").write_text("\n".join(lines) + "\n")
