@@ -158,6 +158,25 @@ def _report_with_gaps(report: ValidationReport, gaps: list[str]) -> ValidationRe
     return ValidationReport(report.findings + [_gap_finding(g) for g in gaps])
 
 
+def _manifest_finding(problem: str) -> Finding:
+    """Turn one check_manifest_consistency problem string into a failing Finding.
+
+    Why (M1): mirrors _gap_finding above - a manifest/file mismatch on the
+    permissive (strict=False) path must be discoverable in
+    validation_report.json, not just present as a string nobody reads once
+    the build proceeds anyway. Best-effort parse of the
+    "<modality>/<recording_id>.parquet <detail>" shape
+    check_manifest_consistency emits; a string that doesn't match still
+    round-trips (the full text lands in `observed`).
+    """
+    modality, sep, rest = problem.partition("/")
+    recording_id, sep2, detail = rest.partition(".parquet ")
+    if not sep or not sep2:
+        modality, recording_id, detail = "-", "-", problem
+    return Finding("manifest_consistency", recording_id, modality, "-", detail,
+                   "has_<modality> flag matches file presence", False)
+
+
 def _refuse_foreign_directory(out: Path) -> None:
     if not out.exists():
         return
@@ -321,8 +340,16 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         channels.to_parquet(staging / "channels.parquet", index=False)
 
         problems = check_manifest_consistency(manifest, staging)
-        if problems and strict:
-            raise RuntimeError("manifest inconsistent: " + "; ".join(problems))
+        if problems:
+            if strict:
+                raise RuntimeError("manifest inconsistent: " + "; ".join(problems))
+            # Why (M1): on the permissive path these used to be computed and
+            # then discarded - neither raised, appended, nor printed. Same
+            # principle as _report_with_gaps above: the report that gets
+            # persisted and returned must not diverge from what
+            # check_manifest_consistency actually found.
+            final_report = ValidationReport(
+                final_report.findings + [_manifest_finding(p) for p in problems])
 
         docs.write_license(staging)
         docs.write_datapackage(staging, manifest, channels)

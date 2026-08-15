@@ -424,6 +424,47 @@ def test_permissive_build_returns_the_same_report_it_persists(tmp_path, monkeypa
     assert [f.passed for f in report.findings] == [p["passed"] for p in persisted]
 
 
+# --- M1: strict=False must not silently discard manifest inconsistencies --
+
+def test_permissive_build_surfaces_manifest_inconsistencies_as_findings(tmp_path, monkeypatch):
+    """`problems = check_manifest_consistency(...)` used to be computed and
+    then discarded on the strict=False path - neither raised, appended to
+    the report, nor printed, contradicting the same "returned report must
+    not diverge from disk" principle the coverage-gap fix established.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    def fake_problems(manifest, staging):
+        return ["watch/FAKE-001.parquet declared but missing"]
+
+    monkeypatch.setattr(build_mod, "check_manifest_consistency", fake_problems)
+    out = tmp_path / "out"
+    report = build_dataset(sources(tmp_path), out, strict=False)
+
+    manifest_findings = [f for f in report.findings if f.check == "manifest_consistency"]
+    assert manifest_findings, "manifest-consistency problems must surface as findings"
+    assert all(not f.passed for f in manifest_findings)
+    assert any(f.recording_id == "FAKE-001" for f in manifest_findings)
+
+    persisted = json.loads((out / "validation_report.json").read_text())
+    assert [f.check for f in report.findings] == [p["check"] for p in persisted]
+    assert [f.passed for f in report.findings] == [p["passed"] for p in persisted]
+
+
+def test_strict_build_still_raises_on_a_manifest_inconsistency(tmp_path, monkeypatch):
+    """The strict=True branch must be unaffected by the M1 fix - it still
+    raises before any of the permissive-path finding-collection code runs.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    def fake_problems(manifest, staging):
+        return ["watch/FAKE-001.parquet declared but missing"]
+
+    monkeypatch.setattr(build_mod, "check_manifest_consistency", fake_problems)
+    with pytest.raises(RuntimeError, match="manifest inconsistent"):
+        build_dataset(sources(tmp_path), tmp_path / "out", strict=True)
+
+
 def test_interrupted_promotion_leftovers_are_announced_not_touched(tmp_path, capsys):
     """fix round 2, item 4: a promotion killed between its two renames
     leaves `out` correct (see _promote's docstring) but its `.build-*`/
