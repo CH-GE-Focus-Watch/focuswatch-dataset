@@ -9,3 +9,6 @@ data/
 alldata/
 *.parquet
 *.zip
+
+# IDE state - never part of a published code artefact
+.idea/
