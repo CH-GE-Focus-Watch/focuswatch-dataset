@@ -33,7 +33,13 @@ def _missing_table_reason(root: Path, recording_id: str, modality: str) -> str:
     # rather than an unrelated crash while trying to explain the first one.
     try:
         manifest = load_manifest(root)
-    except (FileNotFoundError, OSError):
+    except Exception:
+        # Why: broad on purpose. This path only ever runs after a table is
+        # already known to be missing, purely to add a better reason to that
+        # failure - a truncated or corrupted sessions.parquet from a partial
+        # download raises pyarrow.lib.ArrowInvalid (not an OSError subclass),
+        # and any such secondary failure here must lose to the message it was
+        # trying to improve, not replace it with an unrelated traceback.
         return ""
     rows = manifest.loc[manifest["recording_id"] == recording_id]
     if rows.empty:
@@ -74,12 +80,24 @@ def load_recordings(root: Path | str, recording_ids: list[str],
     neither table carries.
     """
     root = Path(root)
+    if not recording_ids:
+        # Why: the natural path, not an abuse - a by_flags()/query() filter
+        # that matched nothing pipes an empty recording_id column straight in
+        # here. pd.concat([]) would otherwise raise its own bare "No objects
+        # to concatenate", which points at neither the empty input nor the
+        # corpus, and reads as this function's bug rather than the caller's
+        # filter.
+        raise ValueError(
+            f"recording_ids is empty; nothing to load from {root / 'sessions.parquet'} "
+            "- check the filter that produced this selection"
+        )
     manifest = load_manifest(root)
     known = set(manifest["recording_id"])
     missing = [rid for rid in recording_ids if rid not in known]
     if missing:
         raise KeyError(
-            f"recording id(s) {missing} not found in {root / 'sessions.parquet'}"
+            f"recording id(s) {missing} not found in {root / 'sessions.parquet'}; "
+            "see load_manifest(root)['recording_id'] for the ids that exist"
         )
     if modality == "watch" and "accel_semantics" in manifest.columns:
         by_id = manifest.set_index("recording_id")["accel_semantics"]

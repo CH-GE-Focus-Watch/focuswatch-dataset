@@ -141,6 +141,48 @@ def test_load_recordings_unknown_id_raises(tmp_path):
         load_recordings(tmp_path, ["A", "NOPE"])
 
 
+def test_load_recordings_unknown_id_points_at_load_manifest(tmp_path):
+    build_bundle(tmp_path)
+    with pytest.raises(KeyError, match=r"load_manifest\(root\)\['recording_id'\]"):
+        load_recordings(tmp_path, ["NOPE"])
+
+
+# --- fix round 1: empty recording_ids ----------------------------------------
+# Pre-fix, this reached pd.concat([]) and raised pandas' own bare
+# "ValueError: No objects to concatenate" - no ids, no corpus path, no hint
+# the input was empty. This is the natural path (a by_flags()/query() filter
+# that matched nothing), not misuse, so it must name what happened.
+
+def test_load_recordings_empty_ids_names_the_input_and_corpus(tmp_path):
+    build_bundle(tmp_path)
+    with pytest.raises(ValueError, match="recording_ids is empty") as exc_info:
+        load_recordings(tmp_path, [])
+    assert "sessions.parquet" in str(exc_info.value)
+    assert "No objects to concatenate" not in str(exc_info.value)
+
+
+def test_load_recordings_empty_ids_from_a_matching_nothing_filter(tmp_path):
+    # The realistic trigger: a by_flags() filter matches nothing, and its
+    # empty recording_id column is piped straight into load_recordings.
+    build_bundle(tmp_path)
+    m = load_manifest(tmp_path)
+    got = select.by_flags(m, watch_hz_nominal=999.0)
+    with pytest.raises(ValueError, match="recording_ids is empty"):
+        load_recordings(tmp_path, got["recording_id"].tolist())
+
+
+# --- fix round 1: diagnostic except must survive a corrupted manifest --------
+# A truncated/corrupted sessions.parquet (a realistic partial-download state)
+# raises pyarrow.lib.ArrowInvalid from _missing_table_reason's best-effort
+# load_manifest() call, not an OSError - the original narrow except let that
+# secondary failure replace the FileNotFoundError it was trying to improve.
+
+def test_load_recording_missing_table_survives_a_corrupt_manifest(tmp_path):
+    (tmp_path / "sessions.parquet").write_bytes(b"not actually parquet")
+    with pytest.raises(FileNotFoundError, match=r"has no watch table"):
+        load_recording(tmp_path, "A")
+
+
 def test_load_recordings_semantics_guard_is_scoped_to_watch(tmp_path):
     # Two recordings disagree on watch accel_semantics ("user" vs "total"),
     # but pen tables carry no acceleration at all - the guard must not block
