@@ -269,8 +269,12 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         "pipeline's clock and is open-ended by design, not a closed set. A `src_`-prefixed "
         "provenance column can be on a genuinely different clock than its modality's own "
         "canonical time axis, though, and gets an EXPLICIT per-column override in that case "
-        "(the Channels table below reflects it) - these five terms are that fixed, closed "
-        "override vocabulary:", "",
+        "(the Channels table below reflects it). The override value is either ANOTHER clock "
+        "already named elsewhere in this bundle (e.g. ML4SCS's `watch.src_local_ts_ms` and "
+        "`watch.src_server_received_ms` are overridden to `server_wall_clock` - the same "
+        "clock `pen`/`markers` already use, just not `watch`'s own default), or one of these "
+        "five dedicated terms for a clock (or non-clock) that no modality default already "
+        "names:", "",
         "| value | meaning |", "|---|---|"]
     for value, meaning in _TIME_DOMAIN_OVERRIDE_VOCABULARY:
         lines.append(f"| `{value}` | {meaning} |")

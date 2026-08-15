@@ -315,8 +315,9 @@ freier Text (`unit = n/a`) — anders als `label` kein geschlossenes Vokabular.
 ### `channels.parquet`
 
 Eine Zeile pro `(recording_id, modality, column)`: `quantity`, `unit`,
-`semantics`, `frame`, `sample_rate_hz`, `unit_conversion_factor`. Das ist das
-BIDS-`channels.tsv`-Muster, flach gehalten. ~1.000 Zeilen.
+`semantics`, `frame`, `sample_rate_hz`, `unit_conversion_factor`,
+`time_domain`. Das ist das BIDS-`channels.tsv`-Muster, flach gehalten.
+Gemessen: 2.000 Zeilen.
 
 `unit` benutzt ein geschlossenes, einheitlich angewendetes Vokabular über
 alle nicht-physikalischen Spalten hinweg (physikalische Größen tragen ihre
