@@ -181,10 +181,16 @@ ETH-Sessions eine Konstruktion.
 (`pen_connected_t_ms`, `session_start_t_ms`, `pen_minus_session_ms`) hält
 lediglich fest, wann der Pen relativ zum Sessionstart verbunden wurde; beide
 Werte liegen bereits auf der Wall-Clock. Der eigentliche Zweit-Uhren-Träger ist
-unauffälliger: **jedes** ETH-Pen-Event führt in `payload.timestamp` zusätzlich
-die Pen-Geräteuhr (Beispiel E2: `t_ms` 1780853816507 gegen `payload.timestamp`
-1716121921598, ≈ 749 Tage Versatz). Diese bleibt als Metadatum erhalten, analog
-zu `pen_logger.py`s Trennung von `local_ts_ms` und `timestamp`.
+unauffälliger: **jedes generation-B-ETH-Pen-Event** (SensorLogger `E1`/`E2`/
+`E3`, aus `events`) führt in `payload.timestamp` zusätzlich die Pen-Geräteuhr
+(Beispiel E2: `t_ms` 1780853816507 gegen `payload.timestamp` 1716121921598,
+≈ 749 Tage Versatz). Diese bleibt als Metadatum erhalten, analog zu
+`pen_logger.py`s Trennung von `local_ts_ms` und `timestamp`. **Generation A**
+(Ege-CSV **und** die vier per SensorLogger-JSON gelieferten `pen_events`-
+Recordings `S3`/`T8`/`T9`/`T10`) trägt diese Geräteuhr NICHT — gemessen der
+reale Ege-`pen_events.csv`-Header: `id, session_id, t_ms, t_session_ms, type,
+x, y, force, created_at`, kein `timestamp`-Feld. `src_timestamp` ist dort NaN
+von Natur aus, nicht durch Datenverlust in dieser Pipeline.
 
 ### 5.1 Gemessene Ausgangslage
 
@@ -259,6 +265,13 @@ fusionierten `watch/`-Tabelle abweichen.
 ### `pen/`
 
 `t_ns`, `dot_type`, `x`, `y`, `pressure`, `tilt_x`, `tilt_y`.
+
+Moleskine führt Tilt real (Pen-Hardware-Sensor). Innerhalb der ETH-Kohorte
+ist `tilt_x`/`tilt_y` dagegen nur für die drei generation-B-SensorLogger-
+Recordings (`E1`/`E2`/`E3`) real belegt — Ege liefert kein Tilt (siehe §5.0);
+für Ege sowie die per SensorLogger-JSON gelieferten generation-A-Sessions
+(`S3`/`T8`/`T9`/`T10`) ist die Spalte NaN, weil die Quelle den Sensor nicht
+führt — kein Verlust dieser Pipeline.
 
 Die Moleskine-Framing-Rows (`x = y = −1`) bleiben als Sentinel erhalten und
 werden im Data Dictionary hervorgehoben — sie zu Null zu machen wäre eine

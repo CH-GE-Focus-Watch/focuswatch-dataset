@@ -353,7 +353,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
 
         docs.write_license(staging)
         docs.write_datapackage(staging, manifest, channels)
-        docs.write_data_dictionary(staging, channels)
+        docs.write_data_dictionary(staging, manifest, channels)
         docs.write_readme(staging, manifest, channels)
         (staging / "validation_report.json").write_text(final_report.to_json())
         # Why: promotion is inside this same try - a failure here (either

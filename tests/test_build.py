@@ -715,3 +715,56 @@ def test_readme_is_generated_from_the_actual_build(tmp_path):
     # The recipe chapter must use the real, importable public API (I3), not
     # a stale snippet a reuser would copy-paste into an ImportError.
     assert "from focuswatch_dataset import load_manifest, load_recording, by_flags" in text
+
+
+# --- I5: the unit vocabulary ships defined, and pen units are disambiguated -
+
+def test_data_dictionary_ships_the_unit_vocabulary_glossary(tmp_path):
+    """The `unit` column's non-physical values (category/ordinal/device_native/
+    source_native/n/a) were previously defined only in docs/DESIGN.md (German,
+    never shipped) and a schema.py code comment - a reuser with only the
+    archive had no glossary at all.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    text = (out / "data_dictionary.md").read_text()
+    assert "## Unit vocabulary" in text
+    for value in ("category", "ordinal", "device_native", "source_native", "n/a"):
+        assert f"`{value}`" in text
+
+
+def test_data_dictionary_disambiguates_pen_x_by_recording(tmp_path):
+    """The channels summary lists `pen | x` once per distinct unit value with
+    no way to tell which recording carries which - a per-recording table,
+    read straight from the manifest's own pen_xy_unit/pen_pressure_scale
+    columns, closes that gap.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    text = (out / "data_dictionary.md").read_text()
+
+    assert "## Pen coordinate/pressure units by recording" in text
+    pen_rows = manifest.loc[manifest["has_pen"]]
+    assert len(pen_rows) > 0
+    for _, r in pen_rows.iterrows():
+        assert f"| {r.recording_id} | {r.cohort} | {r.pen_xy_unit} | {r.pen_pressure_scale} |" in text
+
+
+def test_data_dictionary_states_the_generation_a_vs_b_measured_facts(tmp_path):
+    """Two measured facts from whole-branch-review-findings.md's open
+    questions 4 and 6 must be quoted, not paraphrased or invented: the real
+    Ege pen_events.csv header (tilt/pen-device clock exist only for
+    generation-B ETH recordings), and the observed pen x/y range that shows
+    the ~256x scale jump - with an explicit refusal to invent a millimetre
+    conversion.
+    """
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    text = (out / "data_dictionary.md").read_text()
+
+    assert "id, session_id, t_ms, t_session_ms, type, x, y, force, created_at" in text
+    assert "generation-B" in text
+    assert "E1_session3" in text and "5.69" in text and "16416.00" in text
+    assert "pen_paper_info" in text
+    assert "millimetre conversion" in text

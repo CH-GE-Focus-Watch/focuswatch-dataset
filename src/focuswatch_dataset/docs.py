@@ -154,7 +154,35 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
     (out / "README.md").write_text("\n".join(lines) + "\n")
 
 
-def write_data_dictionary(out: Path, channels: pd.DataFrame) -> None:
+# I5: the unit vocabulary glossary. Previously defined only in
+# docs/DESIGN.md (German, never shipped in the bundle) and a schema.py code
+# comment (_KNOWN_METADATA_COLUMNS) a reuser downloading the archive never
+# sees. Physical quantities carry their own SI-ish unit directly (g, rad/s,
+# "1" for a unit quaternion, "ns" for a timestamp); every other column's
+# `unit` cell is one of these five.
+_UNIT_VOCABULARY = (
+    ("category", "one of a fixed, enumerated set of string values."),
+    ("ordinal", "the position of an item within a sequence, not a magnitude "
+               "(e.g. `task_index`)."),
+    ("device_native", "a raw value in the source stream's own scale. For pen `x`/`y`/"
+                      "`pressure` the actual scale is a genuinely different unit per "
+                      "recording, not a fixed constant - look up `pen_xy_unit`/"
+                      "`pen_pressure_scale` in the per-recording table below (Moleskine's "
+                      "Ncode grid and the ETH web app's own pixel/force scale are unrelated "
+                      "scales that happen to share a column name)."),
+    ("source_native", "a `src_`-prefixed provenance passthrough column: the source "
+                      "device's own value, kept for audit, never reinterpreted or rescaled."),
+    ("n/a", "no physical or source unit applies (e.g. a categorical id)."),
+)
+
+# I5 (open question 4): the real Ege `pen_events.csv` header, measured
+# directly from the source - NOT `t_ms, x, y, force, tilt.x, tilt.y,
+# timestamp` as an earlier draft of docs/DESIGN.md assumed. Ege's export
+# carries neither tilt nor a pen-device clock at all.
+_EGE_PEN_EVENTS_HEADER = "id, session_id, t_ms, t_session_ms, type, x, y, force, created_at"
+
+
+def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
     # C2: the old sentence named a single recording-level `time_domain` as
     # covering every timestamp in a recording. False for any cohort whose
     # modalities are not all on one clock (ML4SCS: watch on its own capture
@@ -173,12 +201,66 @@ def write_data_dictionary(out: Path, channels: pd.DataFrame) -> None:
              "modalities share a clock: the offset between them is estimated but not",
              "published, and `pen_delta_sigma` is that estimate's confidence, not its value.", "",
              "Pen rows with `x = y = -1` are framing events without a position. They are",
-             "retained deliberately; treating them as measurements skews any positional statistic.", ""]
+             "retained deliberately; treating them as measurements skews any positional statistic.", "",
+             "## Unit vocabulary", "",
+             "Physical quantities carry their own unit directly. Every other column's `unit` "
+             "cell is one of:", "",
+             "| value | meaning |", "|---|---|"]
+    for value, meaning in _UNIT_VOCABULARY:
+        lines.append(f"| `{value}` | {meaning} |")
+
+    lines += [
+        "", "## Pen tilt and the pen-device clock: generation-B ETH only", "",
+        "Moleskine (ML4SCS) carries real tilt from its own pen hardware - this section is "
+        "about the ETH cohort only. Both ETH pipelines export the same web app's pen events, "
+        "but the corpus mixes two export generations (see the adapter split for "
+        "`pen_events`/`events` keys). WITHIN the ETH cohort, tilt (`tilt_x`/`tilt_y`) and the "
+        "pen-device clock (`src_timestamp`) exist ONLY for the three generation-B ETH "
+        "SensorLogger recordings (E1, E2, E3). Ege's own export and "
+        "the four generation-A recordings SensorLogger also carries (S3, T8, T9, T10) have "
+        "neither in their source - the real Ege `pen_events.csv` header is:", "",
+        f"```\n{_EGE_PEN_EVENTS_HEADER}\n```", "",
+        "so `tilt_x`, `tilt_y` and `src_timestamp` are NaN there BY NATURE (the source never "
+        "measured them), not by loss in this pipeline.", "",
+        "## Pen coordinate scale: occasional far-scale samples, not a millimetre unit", "",
+        "ETH pen `x`/`y` occasionally jump scale within a single recording. Measured on the "
+        "actual corpus: `ETH-SL-E1_session3`'s `x` spans 5.69 … 16416.00 - 18,846 of "
+        "18,848 samples sit in [5.69, 63.55] and the remaining 2 sit at exactly 16416.00, "
+        "≈258× the low cluster's maximum (`ETH-SL-E2_session6` shows the same "
+        "pattern, ≈260×, on 4 of 7,130 samples). `ETH-EGE-T6`'s `y` shows the same "
+        "phenomenon as a substantial cluster rather than a handful of points: 149 samples "
+        "confined to [2048.01, 3072.83] end within 0.255 s of a `pen_paper_info` marker "
+        "event, immediately followed by 2,367 samples in [8704.57, 34816.62] - consistent "
+        "with a page or section change. Plotting a recording's raw strokes without "
+        "segmenting will flatten the main cluster to a line under the far-scale points. For "
+        "generation-A recordings, segment on `pen_paper_info` events (`markers/`) to find "
+        "the transitions; generation-B recordings (E1/E2/E3) never carry `pen_paper_info` "
+        "at all, so this cue is unavailable there and far-scale samples must be found by "
+        "inspection instead (e.g. a percentile filter). Do NOT treat any of this as a "
+        "millimetre conversion - no such mapping is established for either pen coordinate "
+        "scale.", ""]
+
     summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))
-    lines += ["| modality | column | quantity | unit | semantics | time_domain | recordings |",
+    lines += ["## Channels", "", "| modality | column | quantity | unit | semantics | "
+              "time_domain | recordings |",
               "|---|---|---|---|---|---|---|"]
     for _, r in summary.iterrows():
         lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
                      f"{r.semantics} | {r.time_domain} | {r.recordings} |")
+
+    # I5: the table above lists `pen | x` once per distinct unit VALUE
+    # ("ncode_grid", "webapp_raw", ...), but a unit string alone does not say
+    # which recording it belongs to - this ties each value back to a
+    # recording_id, straight from the manifest that already carries it.
+    pen_rows = manifest.loc[manifest["has_pen"],
+                            ["recording_id", "cohort", "pen_xy_unit", "pen_pressure_scale"]]
+    if len(pen_rows):
+        lines += ["", "## Pen coordinate/pressure units by recording", "",
+                  "| recording_id | cohort | pen_xy_unit | pen_pressure_scale |",
+                  "|---|---|---|---|"]
+        for _, r in pen_rows.sort_values("recording_id").iterrows():
+            lines.append(f"| {r.recording_id} | {r.cohort} | {r.pen_xy_unit} | "
+                        f"{r.pen_pressure_scale} |")
+
     (out / "data_dictionary.md").write_text("\n".join(lines) + "\n")
