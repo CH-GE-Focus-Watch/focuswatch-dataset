@@ -153,7 +153,10 @@ class EgeAdapter:
         out = pd.DataFrame({
             "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
             "event": raw["event_type"].astype(str),
-            "task_id": "", "task_name": "", "task_index": -1,
+            # Why (I15): NaN, not -1 - one encoding for "not applicable" across
+            # cohorts. -1 looks like a valid index to a reuser filtering
+            # `task_index >= 0`; NaN cannot be mistaken for one.
+            "task_id": "", "task_name": "", "task_index": np.nan,
             "task_category": "", "protocol_id": "eth_web",
             "src_payload": raw.get("payload", ""),
             # Why: t_session_ms is a fixed column of events.csv in the documented

@@ -139,6 +139,11 @@ class Ml4scsAdapter:
         raw = pd.read_csv(path)
         out = raw.rename(columns={"timestamp_ms": "_ms"})
         out["t_ns"] = to_unix_ns(out.pop("_ms").to_numpy(), "ms")
+        # Why (I15): float64 with NaN = "not applicable" is the encoding both
+        # ETH adapters now also use for this column - an explicit cast makes
+        # that a structural fact of this column rather than an accident of
+        # whether a given CSV happens to contain a blank cell.
+        out["task_index"] = out["task_index"].astype("float64")
         cols = ["t_ns", "event", "task_id", "task_name", "task_index", "task_category", "protocol_id"]
         return sort_stable_by_time(out[cols])
 

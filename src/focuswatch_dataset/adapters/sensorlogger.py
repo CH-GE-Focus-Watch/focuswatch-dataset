@@ -216,7 +216,8 @@ class SensorLoggerAdapter:
             markers = sort_stable_by_time(pd.DataFrame({
                 "t_ns": to_unix_ns(np.array([e["t_ms"] for e in others], dtype=np.int64), "ms"),
                 "event": [e["event"] for e in others],
-                "task_id": "", "task_name": "", "task_index": -1,
+                # Why (I15): NaN, not -1 - see ege.py's identical fix for the rationale.
+                "task_id": "", "task_name": "", "task_index": np.nan,
                 "task_category": "", "protocol_id": "eth_web",
                 "src_payload": [json.dumps(e.get("payload", {})) for e in others],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
