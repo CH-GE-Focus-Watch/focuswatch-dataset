@@ -29,7 +29,7 @@ gitignored). 67 Recordings aus vier Quell-Pipelines:
 |---|---:|---|---|
 | ML4SCS | 33 | Watch + Pen + Marker (lückenlos) | Pen `dot_type`, Task-Marker |
 | ETH Ege-Pipeline | 2 (T6, T7) | Watch + Head + Pen + Web-Events | Pen-Events, Phasen-Events |
-| ETH SensorLogger | 7 (E1–E3, T8–T10, S3) | Wrist + Head (+ Roh-Accel in 6/7) | Pen-Events im Session-JSON (nur E1–E3), Phasen-Events |
+| ETH SensorLogger | 7 (E1–E3, T8–T10, S3) | Wrist + Head (+ Roh-Accel in 6/7) | Pen-Events im Session-JSON (alle 7 — E1–E3 verschachtelt in `events`, T8–T10/S3 unter dem separaten `pen_events`-Key, siehe C3 unten), Phasen-Events |
 | AirPods-Attention | 25 (P1–P19, P21–P26) | Head-IMU (~25 Hz) | Beobachter-Intervalle |
 
 Gemessene Modalitäts-Abdeckung — sie ist bewusst lückenhaft, und genau das
@@ -40,17 +40,18 @@ begründet das Flag-Modell:
 | `watch/` | 42 | 33 ML4SCS + 2 Ege + 7 SensorLogger |
 | `watch_rawaccel/` | 6 | SensorLogger ohne E3 (dort fehlt die Datei) |
 | `headimu/` | 34 | 25 AirPods + 2 Ege + 7 SensorLogger |
-| `pen/` | 38 | 33 ML4SCS + 2 Ege + 3 SensorLogger (E1–E3) |
+| `pen/` | 42 | 33 ML4SCS + 2 Ege + 7 SensorLogger |
 | `markers/` | 42 | 33 ML4SCS + 2 Ege + 7 SensorLogger |
 | `attention/` | 25 | AirPods |
 
-**T8, T9, T10 und S3 tragen keine Pen-Strokes** — ihr Session-JSON enthält nur
-ein `pen_session_sync`-Event, keine `pen_down`/`pen_move`/`pen_up`. Das erklärt,
-warum der bestehende `foreign_adapter` sie nie verarbeitet hat: es gibt nichts
-zu alignen. Sie werden trotzdem publiziert (`has_pen = false`): rund vier
-Stunden Watch- und Head-IMU mit Phasen-Markern sind für selbstüberwachtes
-Vortrainieren wertvoll und für einen überwachten Benchmark unbrauchbar — die
-Flag entscheidet, welcher Nachnutzer sie bekommt.
+**T8, T9, T10 und S3 tragen reale Pen-Strokes.** Ihr Session-JSON führt sie
+unter einem separaten, flachen `pen_events`-Key statt (wie bei E1–E3)
+verschachtelt in `events` — der ursprüngliche `foreign_adapter` las nur
+`events` und hat sie deshalb nie verarbeitet; das sah aus wie "trägt keine
+Strokes", war aber ein ungelesener Key (C3). Behoben: alle vier publizieren
+`has_pen = true` mit 4.697 / 1.322 / 8.885 / 17.509 Stroke-Zeilen (32.413
+insgesamt); ihre `pen_paper_info`-Framing-Events (290 / 58 / 493 / 959) landen,
+wie bei E1–E3, in `markers/`.
 
 Die Pen-Coverage der Pen-tragenden Kohorten ist außerdem sehr ungleich:
 ML4SCS liefert kontinuierliche Moleskine-Ströme, Ege und SensorLogger liefern
@@ -237,6 +238,13 @@ verändert keine Norm und wirft keine Exception.
 
 ## 6. Kanonisches Schema
 
+Innerhalb einer Modalität publiziert jedes Recording **dasselbe Spaltenset**
+(I15) — fehlt einer Quelle ein Feld (kein Payload, keine Pen-Geräteuhr, kein
+Session-relativer Offset), ist die Spalte leer (`NaN`/`""`), nie abwesend. Ein
+Nachnutzer, der z. B. `pen/` oder `markers/` über Kohorten hinweg
+konkateniert, bekäme sonst einen ragged Frame, in dem ein Filter wie
+`task_index >= 0` je nach Kohorte etwas anderes bedeutet.
+
 ### `watch/` und `headimu/`
 
 | Spalte | Typ | Einheit | Bedeutung |
@@ -295,11 +303,14 @@ quellenspezifisch davor.
 
 ### `attention/`
 
-`t_start_ns`, `t_end_ns`, `label` — die **Intervalle**, nicht die
+`t_start_ns`, `t_end_ns`, `label`, `activity` — die **Intervalle**, nicht die
 Per-Sample-Expansion. Gemessen: Gerrits `label`-Spalte ist exakt das
 `.txt`-Intervallprotokoll, auf 26.000 Samples ausgerollt. Das Intervall ist die
 rohe Annotation, die Expansion ist ein Derivat (fällt unter D2). Nebeneffekt:
 sichtbar wird, dass die Annotation minutengenau ist und nicht sample-genau.
+`activity` ist die vom Beobachter selbst vergebene Tätigkeitsbeschreibung aus
+demselben Protokoll-Block (z. B. „Loesen von Matheaufgaben"), publiziert als
+freier Text (`unit = n/a`) — anders als `label` kein geschlossenes Vokabular.
 
 ### `channels.parquet`
 
@@ -341,7 +352,7 @@ Manifest — es gibt keinen zweiten, unabhängig gepflegten Ort.
 | Zeit | `time_domain`, `time_alignment`, `t_start_ns`, `t_end_ns`, `duration_s` |
 | Protokoll | `protocol_id`, `study_mode`, `subject_index`, `n_writing_tasks`, `n_idle_tasks` |
 | | *`n_writing_tasks`/`n_idle_tasks` sind ML4SCS-skopiert — nur `adapters/ml4scs.py`s Markers tragen eine echte `task_category`-Taxonomie (`writing`/`idle`). Ege und SensorLogger schreiben ein reines Session-Event-Log ohne Task-Kategorie, dort steht `None` (nicht `0` — ein `0` würde fälschlich „Protokoll ohne Schreib-Tasks" statt „Taxonomie nicht anwendbar" bedeuten).* |
-| Träger-Kontext | `watch_wrist_side` ∈ {`left`, `right`, `unknown`} |
+| Träger-Kontext | `watch_wrist_side` ∈ {`left`, `right`, `unknown`}; `handedness` ∈ {`left`, `right`, `unknown`} (nur die ETH-Kohorte — beide Web-App-Pipelines lesen sie aus demselben `session_start`-Payload, siehe §8) |
 | Pen | `pen_xy_unit`, `pen_pressure_scale`, `pen_delta_s`, `pen_delta_sigma`, `delta_applied` (immer `false`), `alignment_note` |
 | Qualität | `n_samples_watch`, `n_samples_pen`, `n_samples_head`, `issue_codes` |
 | Provenienz | `source_pipeline`, `schema_version`, `redaction_policy`, `build_git_sha` |
