@@ -264,6 +264,106 @@ def test_write_failure_mid_staging_leaves_out_untouched(tmp_path, monkeypatch):
     assert leaked == []
 
 
+# --- Fix round 2 -------------------------------------------------------
+
+def test_promotion_failure_does_not_leak_the_staging_directory(tmp_path, monkeypatch):
+    """fix round 2, item 1: the old code called _promote(staging, out)
+    *outside* the try/except that cleaned up staging, so a failure inside
+    promotion itself (as opposed to a failure while populating staging)
+    leaked the staging directory forever next to `out` - exactly the
+    accumulating-sibling outcome the staging design exists to prevent.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    def boom(a, b):
+        raise OSError("simulated promotion failure")
+
+    monkeypatch.setattr(build_mod.os, "replace", boom)
+    out = tmp_path / "out"
+    with pytest.raises(OSError, match="simulated promotion failure"):
+        build_dataset(sources(tmp_path), out)
+    assert not out.exists()
+    leaked = [p for p in tmp_path.iterdir() if p.name.startswith(f".{out.name}.build-")]
+    assert leaked == []
+
+
+def test_out_as_a_plain_file_refuses_with_a_runtime_error_not_a_traceback(tmp_path):
+    """fix round 2, item 2: out.iterdir() on a plain file raises
+    NotADirectoryError, which escapes both this module's own RuntimeError
+    contract and cli.py's `except RuntimeError`.
+    """
+    out = tmp_path / "out"
+    out.write_text("i am a file, not a directory")
+    with pytest.raises(RuntimeError, match="refusing to build"):
+        build_dataset(sources(tmp_path), out)
+    assert out.read_text() == "i am a file, not a directory"
+
+
+def test_cli_build_reports_out_as_a_file_without_a_traceback(tmp_path, capsys):
+    src = sources(tmp_path)
+    out = tmp_path / "out"
+    out.write_text("occupied")
+    args = ["build", "--out", str(out)]
+    for name, path in src.items():
+        args += ["--source", f"{name}={path}"]
+    assert main(args) == 1
+    assert "build failed" in capsys.readouterr().out
+    assert out.read_text() == "occupied"
+
+
+def test_permissive_build_returns_the_same_report_it_persists(tmp_path, monkeypatch):
+    """fix round 2, item 3: a strict=False build with real coverage gaps
+    used to persist a validation_report.json carrying synthetic
+    coverage_gap findings while returning the original report object,
+    which did not - cli.py's summary/exit code read the returned report,
+    not the file, so the two disagreed about whether anything failed.
+    """
+    import focuswatch_dataset.build as build_mod
+
+    original = build_mod.validate_motion_table
+
+    def dropped(df, recording_id, modality, nominal_hz):
+        findings = original(df, recording_id, modality, nominal_hz)
+        if modality == "watch":
+            findings = [f for f in findings if f.check != "gyro_range"]
+        return findings
+
+    monkeypatch.setattr(build_mod, "validate_motion_table", dropped)
+    out = tmp_path / "out"
+    report = build_dataset(sources(tmp_path), out, strict=False)
+
+    assert any(f.check == "coverage_gap" for f in report.findings)
+    persisted = json.loads((out / "validation_report.json").read_text())
+    assert [f.check for f in report.findings] == [p["check"] for p in persisted]
+    assert [f.passed for f in report.findings] == [p["passed"] for p in persisted]
+
+
+def test_interrupted_promotion_leftovers_are_announced_not_touched(tmp_path, capsys):
+    """fix round 2, item 4: a promotion killed between its two renames
+    leaves `out` correct (see _promote's docstring) but its `.build-*`/
+    `.replaced-*` siblings unrecoverable-by-inspection unless something
+    names them. Neither must be touched - only reported.
+    """
+    out = tmp_path / "out"
+    leftover_build = tmp_path / f".{out.name}.build-deadbeef"
+    leftover_backup = tmp_path / f".{out.name}.replaced-deadbeef"
+    leftover_build.mkdir()
+    (leftover_build / "marker.txt").write_text("unpromoted staging content")
+    leftover_backup.mkdir()
+    (leftover_backup / "marker.txt").write_text("previous good build")
+
+    build_dataset(sources(tmp_path), out)
+
+    printed = capsys.readouterr().out
+    assert str(leftover_build) in printed
+    assert str(leftover_backup) in printed
+    # Untouched: still present, content unchanged, and the real build still
+    # landed correctly at `out` alongside them.
+    assert (leftover_build / "marker.txt").read_text() == "unpromoted staging content"
+    assert (leftover_backup / "marker.txt").read_text() == "previous good build"
+    assert (out / "sessions.parquet").exists()
+
+
 # --- redact_bundle actually has a call site --------------------------------
 
 def test_redaction_actually_blanks_the_written_pen_table(tmp_path):

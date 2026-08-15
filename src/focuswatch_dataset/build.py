@@ -19,10 +19,20 @@ disk next to it), and a crash mid-write must not leave a partial manifest.
 Both are solved the same way - every publishable artefact is written into a
 sibling staging directory first and the whole thing is promoted into `out`
 with two directory renames (`out` -> a throwaway backup name, staging ->
-`out`) only once every write has succeeded; any failure before that point
-touches `out` not at all. The two renames stay on one filesystem because the
-staging directory and the backup name are both created next to `out`, not in
-the system temp directory.
+`out`) only once every write has succeeded. `out` itself is never
+simultaneously absent and half-populated, and staging never survives a
+failure: the promotion call sits inside the same try/except as the writes
+that precede it, so a failure during promotion (not just during writing)
+still triggers the staging cleanup - a leaked `.<out>.build-*` sibling
+would otherwise be the accumulating mess this design exists to prevent. The
+two renames stay on one filesystem because the staging directory and the
+backup name are both created next to `out`, not in the system temp
+directory. If a previous promotion was itself interrupted (process killed
+between the two renames), its `.<out>.build-*`/`.<out>.replaced-*` leftovers
+are announced at the start of the next build, never auto-recovered or
+deleted - `out` was already left correct by that interruption (see
+`_promote`'s docstring), so the only gain left is making the leftovers easy
+to find.
 """
 from __future__ import annotations
 
@@ -128,6 +138,12 @@ def _report_with_gaps(report: ValidationReport, gaps: list[str]) -> ValidationRe
 def _refuse_foreign_directory(out: Path) -> None:
     if not out.exists():
         return
+    if not out.is_dir():
+        # Why: checked before out.iterdir(), which raises NotADirectoryError
+        # on a plain file - an error shape that escapes both this function's
+        # own RuntimeError contract and cli.py's `except RuntimeError`,
+        # turning a controlled refusal into a raw traceback.
+        raise RuntimeError(f"refusing to build into {out}: it exists and is not a directory")
     if not any(out.iterdir()):
         return
     if any((out / f).exists() for f in _PRIOR_BUILD_SIGNATURE):
@@ -138,6 +154,33 @@ def _refuse_foreign_directory(out: Path) -> None:
         "focuswatch-dataset build - point --out at an empty directory or a "
         "directory this tool already built"
     )
+
+
+def _warn_about_interrupted_promotions(out: Path) -> None:
+    """Announce, never touch, leftovers from a promotion killed mid-swap.
+
+    `_promote` guarantees `out` itself is left correct even if the process
+    dies between its two renames (see that function's docstring) - but the
+    `.replaced-*` backup and/or `.build-*` staging sibling from that
+    interruption stay on disk with nothing pointing at them. Surfacing them
+    here is the entire fix: no automatic reattachment, no deletion - either
+    would be a destructive guess layered on top of an already-recovered
+    state for a marginal convenience gain.
+    """
+    parent = out.parent
+    if not parent.exists():
+        return
+    build_prefix = f".{out.name}.build-"
+    backup_prefix = f".{out.name}.replaced-"
+    leftovers = sorted(
+        p for p in parent.iterdir()
+        if p.is_dir() and (p.name.startswith(build_prefix) or p.name.startswith(backup_prefix))
+    )
+    for p in leftovers:
+        kind = ("an unpromoted staging directory from an interrupted build"
+                if p.name.startswith(build_prefix) else
+                "the previous build, preserved by an interrupted promotion")
+        print(f"note: {p} looks like {kind} - left untouched, remove manually if unwanted")
 
 
 def _promote(staging: Path, out: Path) -> None:
@@ -169,6 +212,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
                   policy: RedactionPolicy = RedactionPolicy.NONE,
                   strict: bool = True) -> ValidationReport:
     out = Path(out)
+    _warn_about_interrupted_promotions(out)
     _refuse_foreign_directory(out)
     report = ValidationReport()
     bundles: list[RecordingBundle] = []
@@ -190,6 +234,13 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
 
     manifest_preview = build_manifest(bundles)
     gaps = check_coverage(manifest_preview, report.findings)
+    # Why: computed once and used everywhere validation_report.json is
+    # written or returned - report.findings alone (no synthetic coverage_gap
+    # entries) must never diverge from what actually landed on disk, on
+    # either the abort path or the strict=False path that proceeds despite
+    # gaps (cli.py's summary and exit code read the returned report, not the
+    # file, so a mismatch there would silently under-report a real problem).
+    final_report = _report_with_gaps(report, gaps)
     if strict and (report.failed or gaps):
         out.mkdir(parents=True, exist_ok=True)
         report_path = out / "validation_report.json"
@@ -197,7 +248,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         # truncated console message below - a stranger reading
         # validation_report.json after a coverage-gap abort must be able to
         # see every gap, not just the reason a RuntimeError happened to name.
-        report_path.write_text(_report_with_gaps(report, gaps).to_json())
+        report_path.write_text(final_report.to_json())
         detail = f"{len(report.failed)} failed checks"
         if gaps:
             detail += f", {len(gaps)} coverage gaps: " + "; ".join(gaps[:5])
@@ -228,11 +279,16 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
 
         docs.write_datapackage(staging, manifest, channels)
         docs.write_data_dictionary(staging, channels)
-        (staging / "validation_report.json").write_text(
-            _report_with_gaps(report, gaps).to_json())
+        (staging / "validation_report.json").write_text(final_report.to_json())
+        # Why: promotion is inside this same try - a failure here (either
+        # rename) must trigger the same staging cleanup as a write failure,
+        # or a leaked `.<out>.build-*` sibling is exactly the accumulating
+        # mess this whole staging design exists to prevent (see the module
+        # docstring). _promote's own internal recovery keeps `out` correct
+        # either way; this block only ever has staging left to clean up.
+        _promote(staging, out)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
-    _promote(staging, out)
-    return report
+    return final_report
