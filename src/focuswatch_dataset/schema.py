@@ -98,3 +98,12 @@ CAPABILITY_FLAG_COLUMN: dict[str, str] = {
     "has_head_quaternion": "quat_x",
     "has_head_gyro": "gyro_x",
 }
+
+# Why: both tables are keyed by the same sub-flags and can only drift apart in
+# silence - one named here but not there is derived and never required; the
+# reverse is required and never derived. Checking the key sets at import turns
+# that into an immediate failure rather than a check that stops firing.
+assert set(CAPABILITY_FLAG_COLUMN) == set(CAPABILITY_FLAG_MODALITY) - set(MODALITY_FLAGS), (
+    "CAPABILITY_FLAG_COLUMN must name exactly the capability sub-flags: "
+    f"{sorted(set(CAPABILITY_FLAG_MODALITY) - set(MODALITY_FLAGS))}"
+)
