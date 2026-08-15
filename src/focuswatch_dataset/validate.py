@@ -227,6 +227,23 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
 # carry in `Finding.modality`, matching the table key every adapter and
 # `validate_recording` already use.
 _REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band", "gyro_range")
+# Why: watch_rawaccel is accel-only by construction - the name says so, and no
+# export of a raw-accelerometer stream will ever carry a gyroscope. That is a
+# structural fact of the modality, not a property of any particular
+# recording, so gyro_range is excluded from its required set outright rather
+# than gated by a flag: a requirement no instance could ever satisfy is a
+# permanent false alarm, not a safety net.
+_MOTION_CHECKS_NO_GYRO = tuple(c for c in _REQUIRED_MOTION_CHECKS if c != "gyro_range")
+# has_headimu's base set also excludes gyro_range - whether a head table
+# carries a gyroscope is a DATA fact that varies by source (Ege's does not;
+# SensorLogger's and AirPods' do, and AirPods' head gyro is that cohort's
+# only motion signal), so it is required separately, gated by has_head_gyro,
+# below - never assumed either way from has_headimu alone.
+_MOTION_REQUIRED_CHECKS = {
+    "has_watch": _REQUIRED_MOTION_CHECKS,
+    "has_headimu": _MOTION_CHECKS_NO_GYRO,
+    "has_watch_rawaccel": _MOTION_CHECKS_NO_GYRO,
+}
 _MODALITY_FLAGS = {
     "has_watch": "watch", "has_watch_rawaccel": "watch_rawaccel", "has_headimu": "headimu",
     "has_pen": "pen", "has_markers": "markers", "has_attention": "attention",
@@ -253,7 +270,7 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
         for flag in _MOTION_MODALITY_FLAGS:
             if row.get(flag):
                 modality = _MODALITY_FLAGS[flag]
-                for check in _REQUIRED_MOTION_CHECKS:
+                for check in _MOTION_REQUIRED_CHECKS[flag]:
                     require(modality, check, "motion table present")
         for flag, modality in _MODALITY_FLAGS.items():
             if row.get(flag):
@@ -275,6 +292,8 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding]) -> list[str]
             require("headimu", "gravity_norm", "has_head_gravity is true")
         if row.get("has_head_quaternion"):
             require("headimu", "quat_norm", "has_head_quaternion is true")
+        if row.get("has_head_gyro"):
+            require("headimu", "gyro_range", "has_head_gyro is true")
         if row.get("has_pen"):
             require("pen", "dot_type_vocabulary", "has_pen is true")
     return problems

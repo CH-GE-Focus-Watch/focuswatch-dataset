@@ -7,7 +7,9 @@ from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.sensorlogger import SensorLoggerAdapter
-from focuswatch_dataset.validate import validate_motion_table
+from focuswatch_dataset.validate import (
+    check_coverage, validate_motion_table, validate_pen_table, validate_recording,
+)
 
 T0_NS = 1780853585220_000_000
 
@@ -240,3 +242,42 @@ def test_watch_hz_nominal_falls_back_to_measured_when_sample_rate_is_absent(tmp_
     rate_finding = next(f for f in findings if f.check == "sample_rate")
     assert rate_finding.passed
     assert rate_finding.observed == pytest.approx(100.0, rel=0.05)
+
+
+def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
+    """End-to-end check_coverage regression (fix-round-3 item 3): the only
+    adapter with such a test (AirPods) was the only adapter whose coverage
+    was actually exercised, which is why the watch_rawaccel/gyro_range and
+    headimu/gyro_range gaps went uncaught. Builds a real bundle from the
+    existing fixture (watch + headimu + watch_rawaccel + pen + markers, all
+    present) and runs it through the real gate."""
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    ref = a.discover(tmp_path)[0]
+    bundle = a.load(ref)
+
+    manifest = pd.DataFrame([{
+        "recording_id": ref.recording_id,
+        "has_watch": "watch" in bundle.tables,
+        "has_watch_rawaccel": bundle.meta["has_watch_rawaccel"],
+        "has_headimu": "headimu" in bundle.tables,
+        "has_pen": bundle.meta["has_pen"],
+        "has_markers": "markers" in bundle.tables,
+        "has_attention": "attention" in bundle.tables,
+        "has_gravity": bundle.meta["has_gravity"],
+        "has_quaternion": bundle.meta["has_quaternion"],
+        "has_head_gravity": bundle.meta["has_head_gravity"],
+        "has_head_quaternion": bundle.meta["has_head_quaternion"],
+        "has_head_gyro": bundle.meta["has_head_gyro"],
+    }])
+
+    findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch",
+                                     bundle.meta["watch_hz_nominal"])
+    findings += validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
+                                      bundle.meta["watch_hz_nominal"])
+    findings += validate_motion_table(bundle.tables["watch_rawaccel"], ref.recording_id,
+                                      "watch_rawaccel", bundle.meta["watch_hz_nominal"])
+    findings += validate_pen_table(bundle.tables["pen"], ref.recording_id)
+    findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
+
+    assert check_coverage(manifest, findings) == []

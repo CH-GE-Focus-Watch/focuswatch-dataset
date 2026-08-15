@@ -96,6 +96,11 @@ class AirPodsAdapter:
             # manifest row claim watch gravity for a recording with no watch.
             "has_head_gravity": "gravity_x" in head.columns,
             "has_head_quaternion": "quat_x" in head.columns,
+            # Why: this cohort's head gyro is its only motion signal (no
+            # watch table exists at all) - declared like the other two head
+            # capabilities so check_coverage actually requires gyro_range to
+            # have run on headimu, rather than assuming it.
+            "has_head_gyro": "gyro_x" in head.columns,
             # Why: accel_semantics/accel_calibration and gravity_source are
             # not symmetric here, despite both being Watch-Capabilities
             # fields. docs/DESIGN.md:317-318 scopes accel_semantics to

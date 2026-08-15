@@ -113,6 +113,7 @@ class SensorLoggerAdapter:
             # watch's.
             "has_head_gravity": "headimu" in tables and "gravity_x" in tables["headimu"].columns,
             "has_head_quaternion": "headimu" in tables and "quat_x" in tables["headimu"].columns,
+            "has_head_gyro": "headimu" in tables and "gyro_x" in tables["headimu"].columns,
             "has_watch_rawaccel": "watch_rawaccel" in tables,
             "has_pen": "pen" in tables,
             "accel_semantics": "user", "accel_calibration": "fused",

@@ -9,7 +9,9 @@ from scipy.spatial.transform import Rotation
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters import base
 from focuswatch_dataset.adapters.ege import EgeAdapter
-from focuswatch_dataset.validate import validate_motion_table
+from focuswatch_dataset.validate import (
+    check_coverage, validate_motion_table, validate_pen_table, validate_recording,
+)
 
 T0 = 1780577357025
 
@@ -141,6 +143,40 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
     assert [f for f in validate_motion_table(watch, "ETH-EGE-T6", "watch", 100.0)
             if not f.passed] == []
+
+
+def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
+    """End-to-end check_coverage regression (fix-round-3 item 3): the only
+    adapter with such a test (AirPods) was the only adapter whose coverage
+    was actually exercised, which is why the headimu/gyro_range gap (Ege's
+    head table structurally carries no gyroscope) went uncaught. Builds a
+    real bundle from the existing fixture (watch + headimu + pen + markers,
+    all present) and runs it through the real gate."""
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    ref = a.discover(tmp_path)[0]
+    bundle = a.load(ref)
+
+    manifest = pd.DataFrame([{
+        "recording_id": ref.recording_id,
+        "has_watch": "watch" in bundle.tables,
+        "has_watch_rawaccel": "watch_rawaccel" in bundle.tables,
+        "has_headimu": "headimu" in bundle.tables,
+        "has_pen": "pen" in bundle.tables,
+        "has_markers": "markers" in bundle.tables,
+        "has_attention": "attention" in bundle.tables,
+        "has_gravity": bundle.meta["has_gravity"],
+        "has_quaternion": bundle.meta["has_quaternion"],
+        "has_head_gyro": bundle.meta["has_head_gyro"],
+    }])
+
+    nominal = bundle.meta["watch_hz_nominal"]   # None - this source states no nominal rate
+    findings = validate_motion_table(bundle.tables["watch"], ref.recording_id, "watch", nominal)
+    findings += validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu", nominal)
+    findings += validate_pen_table(bundle.tables["pen"], ref.recording_id)
+    findings += validate_recording(ref.recording_id, bundle.tables, bundle.meta)
+
+    assert check_coverage(manifest, findings) == []
 
 
 def test_importing_the_adapters_package_registers_ege():

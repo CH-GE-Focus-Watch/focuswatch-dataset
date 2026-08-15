@@ -64,6 +64,12 @@ class EgeAdapter:
             # a hardcoded flag and the actual columns can drift out of sync.
             "has_gravity": "gravity_x" in watch.columns,
             "has_quaternion": "quat_x" in watch.columns,
+            # Why: whether headimu carries a gyroscope is a DATA fact, not
+            # structural - this source's head table never has gx/gy/gz (the
+            # fixture confirms; head_motion_samples_rows.csv has no g*
+            # columns), so this declares false and check_coverage requires
+            # nothing of it, rather than exempting headimu wholesale.
+            "has_head_gyro": "headimu" in tables and "gyro_x" in tables["headimu"].columns,
             "accel_semantics": "total",
             # Established by a still-window test on the real corpus: the norm sits at
             # 0.9954 (T6) / 0.9932 (T7), a persistent per-device bias. A recombination

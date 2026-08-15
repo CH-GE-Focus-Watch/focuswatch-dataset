@@ -169,6 +169,7 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
         "has_attention": bundle.meta["has_attention"],
         "has_head_gravity": bundle.meta["has_head_gravity"],
         "has_head_quaternion": bundle.meta["has_head_quaternion"],
+        "has_head_gyro": bundle.meta["has_head_gyro"],
     }])
     findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
                                      bundle.meta["head_hz_nominal"])
@@ -210,6 +211,7 @@ def test_coverage_matrix_catches_a_stale_attention_flag_beside_a_real_headimu(tm
         "has_attention": True,                      # stale: attention table dropped below
         "has_head_gravity": bundle.meta["has_head_gravity"],
         "has_head_quaternion": bundle.meta["has_head_quaternion"],
+        "has_head_gyro": bundle.meta["has_head_gyro"],
     }])
     findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
                                      bundle.meta["head_hz_nominal"])

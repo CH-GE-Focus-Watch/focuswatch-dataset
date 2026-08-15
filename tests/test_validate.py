@@ -228,8 +228,21 @@ def test_coverage_requires_a_rawaccel_table_that_never_arrived():
     assert any("time_monotonic" in p for p in problems)
     assert any("sample_rate" in p for p in problems)
     assert any("accel_semantic_band" in p for p in problems)
-    assert any("gyro_range" in p for p in problems)
     assert any("time_magnitude" in p for p in problems)
+
+
+def test_coverage_never_requires_gyro_range_on_rawaccel():
+    # Fix-round-3 item 1: watch_rawaccel is accel-only by construction - no
+    # instance of it will ever carry a gyroscope, so requiring gyro_range on
+    # it is a permanent false alarm, not a safety net. Even with zero
+    # findings at all (the "never arrived" case above), gyro_range must not
+    # be among the problems raised for this modality.
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": False, "has_pen": False,
+                              "has_watch_rawaccel": True, "has_markers": False,
+                              "has_attention": False}])
+    problems = check_coverage(manifest, [])
+    assert not any("gyro_range" in p for p in problems)
 
 
 def test_sample_rate_still_emitted_with_no_nominal_rate_declared():
@@ -302,3 +315,35 @@ def test_coverage_requires_head_quat_norm_specifically_on_headimu():
     findings += validate_recording("R1", {"watch": watch}, {})
     problems = check_coverage(manifest, findings)
     assert any("quat_norm" in p and "headimu" in p for p in problems)
+
+
+def test_coverage_requires_head_gyro_range_specifically_on_headimu():
+    # Fix-round-3 item 2: has_head_gyro is a DATA fact (SensorLogger and
+    # AirPods carry it, Ege does not) and, when declared true, must be backed
+    # by a gyro_range finding on headimu specifically - watch's own
+    # gyro_range finding must not satisfy it.
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False, "has_head_gravity": False,
+                              "has_head_quaternion": False, "has_head_gyro": True}])
+    watch = make_watch()
+    findings = validate_motion_table(watch, "R1", "watch", 100.0)
+    findings += validate_recording("R1", {"watch": watch}, {})
+    problems = check_coverage(manifest, findings)
+    assert any("gyro_range" in p and "headimu" in p for p in problems)
+
+
+def test_coverage_does_not_require_gyro_range_on_a_gyro_less_headimu():
+    # The Ege case: has_headimu true, has_head_gyro false (or absent) -
+    # headimu's required set must exclude gyro_range, or an honest recording
+    # whose head table structurally has no gyroscope fails the build forever.
+    manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": False, "has_quaternion": False,
+                              "has_gravity": False, "has_headimu": True, "has_pen": False,
+                              "has_watch_rawaccel": False, "has_markers": False,
+                              "has_attention": False, "has_head_gravity": False,
+                              "has_head_quaternion": False, "has_head_gyro": False}])
+    # No findings at all - only time_monotonic/sample_rate/accel_semantic_band
+    # are legitimately missing; gyro_range must not be among them.
+    problems = check_coverage(manifest, [])
+    assert not any("gyro_range" in p for p in problems)
