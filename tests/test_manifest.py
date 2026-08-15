@@ -109,20 +109,27 @@ def test_channels_raises_when_a_modality_declares_a_blank_time_domain():
         build_channels([b])
 
 
-def test_channels_use_the_per_cohort_pen_unit_when_declared():
-    """Fix-round-2 item 2: test_channels_declare_a_unit_for_every_signal_column
-    uses bundle()'s default meta, which has no pen_xy_unit/pen_pressure_scale
-    - so it only ever exercises _describe_column's "device_native" fallback.
-    The whole point of item 6 (fix round 1) was that a recording that DOES
-    declare its own pen unit gets that unit in channels.parquet, not the
-    fallback. This proves the per-cohort branch actually fires.
+def test_channels_publish_device_native_for_pen_scale_columns_regardless_of_cohort():
+    """Fix round C item 2: channels.parquet's `unit` cell for pen x/y/pressure
+    must stay the closed-vocabulary "device_native" (DESIGN §6) no matter what
+    per-recording scale the adapter declares. The pre-fix behaviour
+    (`meta.get(meta_key) or "device_native"`) leaked the per-recording label
+    itself (`ncode_grid`, `webapp_raw`, ...) into this cell - six values the
+    bundle's own unit-vocabulary glossary never defined (whole-branch-
+    review-2.md finding 2). The per-recording scale still reaches
+    build_manifest's own pen_xy_unit/pen_pressure_scale columns, asserted
+    below - it is a manifest fact, not a channels.parquet fact.
     """
     b = bundle(pen_xy_unit="ncode_grid", pen_pressure_scale="moleskine_raw")
     b.tables["pen"]["pressure"] = [300.0, 300.0]
     ch = build_channels([b])
-    assert set(ch[ch["column"] == "x"]["unit"]) == {"ncode_grid"}
-    assert set(ch[ch["column"] == "y"]["unit"]) == {"ncode_grid"}
-    assert set(ch[ch["column"] == "pressure"]["unit"]) == {"moleskine_raw"}
+    assert set(ch[ch["column"] == "x"]["unit"]) == {"device_native"}
+    assert set(ch[ch["column"] == "y"]["unit"]) == {"device_native"}
+    assert set(ch[ch["column"] == "pressure"]["unit"]) == {"device_native"}
+
+    m = build_manifest([b]).iloc[0]
+    assert m["pen_xy_unit"] == "ncode_grid"
+    assert m["pen_pressure_scale"] == "moleskine_raw"
 
 
 def test_consistency_flags_a_missing_file(tmp_path):

@@ -315,12 +315,22 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
 
 _TIME_COLUMNS = {S.TIME_COLUMN, "t_start_ns", "t_end_ns"}
 
-# Non-physical signal columns whose actual unit is declared per-recording in
-# the manifest, rather than fixed by schema - Moleskine's ncode grid and the
-# ETH web app's own pixel/force scale are genuinely different units for the
-# same column name, so a fixed placeholder would hide real information the
-# manifest already carries. column -> (semantics, manifest meta key holding
-# the actual per-recording unit).
+# Non-physical signal columns whose actual scale is a genuinely different unit
+# per recording (Moleskine's ncode grid vs. the ETH web app's own pixel/force
+# scale, and within ETH a further split by export generation - see
+# schema.PEN_XY_UNIT_GEN_A/B). DESIGN §6 is explicit that channels.parquet's
+# `unit` cell for these stays the closed-vocabulary "device_native" - the
+# per-recording scale label lives ONLY in the manifest
+# (pen_xy_unit/pen_pressure_scale), read from meta[meta_key] there. Item 2
+# (fix round C): this used to leak the per-recording label INTO the `unit`
+# cell too (`meta.get(meta_key) or "device_native"`), which put six
+# undefined values (ncode_grid, moleskine_raw, webapp_raw, webapp_force,
+# sl_webapp_raw, sl_webapp_force) into channels.parquet's supposedly
+# five-value closed vocabulary - restating the same fact in a second place
+# is exactly the drift this project keeps removing. column -> (semantics,
+# manifest meta key holding the actual per-recording unit, still surfaced
+# via the "Pen coordinate/pressure units by recording" table in
+# data_dictionary.md).
 _PEN_SCALE_COLUMNS: dict[str, tuple[str, str]] = {
     "x": ("pen_position", "pen_xy_unit"),
     "y": ("pen_position", "pen_xy_unit"),
@@ -365,13 +375,16 @@ def _describe_column(column: str, quantity: S.Quantity | None,
     """(unit, semantics, frame) for one column - never an empty unit or semantics.
 
     Physical quantities come from schema.UNITS. Time columns (the primary
-    axis and interval endpoints) are nanoseconds. Pen x/y/pressure take their
-    unit from this recording's own manifest declaration (_PEN_SCALE_COLUMNS).
-    Other known non-physical columns (pen tilt, marker/attention metadata)
-    have a hand-picked entry. Anything else - chiefly src_-prefixed
-    provenance passthrough columns, but also any future column no branch
-    above recognises - falls back to an explicit "n/a"/"metadata" pair
-    rather than an empty string.
+    axis and interval endpoints) are nanoseconds. Pen x/y/pressure are
+    "device_native" here (DESIGN §6's closed vocabulary) - their actual
+    per-recording scale is a manifest fact, not a `unit`-cell fact; look it
+    up via _PEN_SCALE_COLUMNS' meta key (published in data_dictionary.md's
+    "Pen coordinate/pressure units by recording" table). Other known
+    non-physical columns (pen tilt, marker/attention metadata) have a
+    hand-picked entry. Anything else - chiefly src_-prefixed provenance
+    passthrough columns, but also any future column no branch above
+    recognises - falls back to an explicit "n/a"/"metadata" pair rather than
+    an empty string.
     """
     if quantity is not None:
         return S.UNITS[quantity], quantity.value, "device"
@@ -380,8 +393,8 @@ def _describe_column(column: str, quantity: S.Quantity | None,
     if column.startswith("src_"):
         return "source_native", "source_provenance", ""
     if column in _PEN_SCALE_COLUMNS:
-        semantics, meta_key = _PEN_SCALE_COLUMNS[column]
-        return (meta.get(meta_key) or "device_native"), semantics, ""
+        semantics, _meta_key = _PEN_SCALE_COLUMNS[column]
+        return "device_native", semantics, ""
     unit, semantics = _KNOWN_METADATA_COLUMNS.get(column, ("n/a", "metadata"))
     return unit, semantics, ""
 

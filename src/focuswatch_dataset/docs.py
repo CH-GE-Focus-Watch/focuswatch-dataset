@@ -259,14 +259,25 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
                      f"{r.semantics} | {r.time_domain} | {r.recordings} |")
 
-    # I5: the table above lists `pen | x` once per distinct unit VALUE
-    # ("ncode_grid", "webapp_raw", ...), but a unit string alone does not say
-    # which recording it belongs to - this ties each value back to a
-    # recording_id, straight from the manifest that already carries it.
+    # I5/item 2 (fix round C): channels.parquet's own `unit` cell for pen
+    # x/y/pressure is the closed-vocabulary "device_native" (every recording
+    # collapses to the same row in the Channels table above) - the actual
+    # per-recording scale is a manifest fact, not a `unit`-cell fact, so it
+    # is tied to a recording_id here instead, straight from the manifest
+    # columns that already carry it.
     pen_rows = manifest.loc[manifest["has_pen"],
                             ["recording_id", "cohort", "pen_xy_unit", "pen_pressure_scale"]]
     if len(pen_rows):
         lines += ["", "## Pen coordinate/pressure units by recording", "",
+                  "`pen_xy_unit`/`pen_pressure_scale` distinguish scales that share the same "
+                  "`x`/`y`/`pressure` column name: Moleskine's own hardware raster "
+                  "(`ncode_grid`/`moleskine_raw`, ML4SCS) and two web-app export generations "
+                  "of the same ETH tool. `webapp_raw`/`webapp_force` is Ege's export and the "
+                  "four SensorLogger recordings sharing its generation-A shape (S3/T8/T9/T10); "
+                  "`sl_webapp_raw`/`sl_webapp_force` is SensorLogger's OWN generation-B export "
+                  "(E1/E2/E3), kept as a distinct label rather than assumed equal - whether the "
+                  "two generations share one underlying coordinate system is unconfirmed, and "
+                  "conflating them would publish that equivalence as fact.", "",
                   "| recording_id | cohort | pen_xy_unit | pen_pressure_scale |",
                   "|---|---|---|---|"]
         for _, r in pen_rows.sort_values("recording_id").iterrows():

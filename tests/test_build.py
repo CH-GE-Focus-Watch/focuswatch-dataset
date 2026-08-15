@@ -786,6 +786,32 @@ def test_data_dictionary_ships_the_unit_vocabulary_glossary(tmp_path):
         assert f"`{value}`" in text
 
 
+def test_every_channels_unit_value_is_defined_in_the_glossary(tmp_path):
+    """Item 2 (fix round C): the glossary above asserts a FIXED five-value set,
+    which does not prove the built channels.parquet only ever contains those
+    five - whole-branch-review-2.md finding 2 measured six MORE values
+    (ncode_grid, moleskine_raw, webapp_raw, webapp_force, sl_webapp_raw,
+    sl_webapp_force) reaching the `unit` column with no definition anywhere
+    in the bundle. Derive the check from channels.parquet itself, the same
+    place the cells come from, so the two cannot drift apart again.
+    """
+    from focuswatch_dataset import schema as S
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    channels = read_table(out / "channels.parquet")
+    text = (out / "data_dictionary.md").read_text()
+
+    physical_units = set(S.UNITS.values()) | {"ns"}
+    glossary_values = {"category", "ordinal", "device_native", "source_native", "n/a"}
+    for value in channels["unit"].unique():
+        if value in physical_units:
+            continue
+        assert value in glossary_values, (
+            f"{value!r} is neither a physical unit nor in the glossary vocabulary"
+        )
+        assert f"`{value}`" in text
+
+
 def test_data_dictionary_disambiguates_pen_x_by_recording(tmp_path):
     """The channels summary lists `pen | x` once per distinct unit value with
     no way to tell which recording carries which - a per-recording table,
