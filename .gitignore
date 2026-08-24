@@ -10,5 +10,8 @@ alldata/
 *.parquet
 *.zip
 
+# Local agent process notes are not part of the public project documentation.
+docs/superpowers/
+
 # IDE state - never part of a published code artefact
 .idea/
