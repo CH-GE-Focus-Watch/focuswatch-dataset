@@ -1,4 +1,4 @@
-"""Command line entry point: fw build | validate | report."""
+"""Command line entry point: fw build | validate | report | explore."""
 from __future__ import annotations
 
 import argparse
@@ -27,6 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("report")
     r.add_argument("--dataset", required=True)
 
+    e = sub.add_parser("explore")
+    e.add_argument("root", metavar="DATASET_ROOT")
+    e.add_argument("--export", default="focuswatch-selection.json", metavar="PATH")
+
     args = parser.parse_args(argv)
 
     if args.command == "build":
@@ -44,6 +48,24 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"{len(report.findings)} checks, {len(report.failed)} failed")
         return 1 if report.failed else 0
+
+    if args.command == "explore":
+        try:
+            from .tui import DatasetExplorerApp
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"textual", "focuswatch_dataset.tui"}:
+                raise
+            print(
+                'Explorer unavailable: install it with pip install '
+                '"focuswatch-dataset[tui]"'
+            )
+            return 1
+        try:
+            DatasetExplorerApp(Path(args.root), export_path=Path(args.export)).run()
+        except Exception as exc:
+            print(f"explore failed: could not read bundle at {args.root}: {exc}")
+            return 1
+        return 0
 
     dataset = Path(args.dataset)
     if args.command == "validate":

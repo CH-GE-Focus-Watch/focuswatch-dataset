@@ -9,6 +9,7 @@ to run before the bundle it is building even exists.
 from __future__ import annotations
 
 from .convert import to_user_acceleration
+from .explore import ExplorerSelection, filter_manifest, selection_query
 from .load import load_channels, load_manifest, load_recording, load_recordings
 from .select import by_flags
 
@@ -19,4 +20,7 @@ __all__ = [
     "load_recordings",
     "by_flags",
     "to_user_acceleration",
+    "ExplorerSelection",
+    "filter_manifest",
+    "selection_query",
 ]

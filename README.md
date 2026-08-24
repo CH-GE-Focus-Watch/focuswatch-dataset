@@ -12,6 +12,18 @@ manifest flags instead of learning three source schemas.
 pip install -e ".[dev]"
 ```
 
+The optional terminal explorer reads only the bundle manifest while filtering:
+
+```bash
+pip install "focuswatch-dataset[tui]"
+fw explore DATASET_ROOT
+```
+
+Use the German-labelled facets to update the Aufnahme count immediately. Press
+`e` to export selected manifest rows plus their reproducible pandas query, `c`
+to copy that query, `p` for source/provenance details, or `q` to quit. The
+default export is `focuswatch-selection.json`; no sensor samples are exported.
+
 ## Tests
 
 ```bash

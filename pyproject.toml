@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "hypothesis>=6.100"]
+tui = ["textual>=0.56"]
 
 [project.scripts]
 fw = "focuswatch_dataset.cli:main"
