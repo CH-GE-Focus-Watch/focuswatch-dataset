@@ -20,40 +20,40 @@ class Facet:
 
 # Registry order is the canonical order for both the UI and generated queries.
 FACETS: dict[str, Facet] = {
-    "smartwatch": Facet("Smartwatch", "Ger\u00e4te", ("has_watch", True)),
-    "head_imu": Facet("Kopf-IMU/Kopfh\u00f6rer", "Ger\u00e4te", ("has_headimu", True)),
-    "digital_pen": Facet("Digitaler Stift", "Ger\u00e4te", ("has_pen", True)),
+    "smartwatch": Facet("Smartwatch", "Devices", ("has_watch", True)),
+    "head_imu": Facet("Head IMU / earbuds", "Devices", ("has_headimu", True)),
+    "digital_pen": Facet("Digital pen", "Devices", ("has_pen", True)),
     "observer_annotation": Facet(
-        "Beobachter-Annotation", "Ger\u00e4te", ("has_attention", True)
+        "Observer annotation", "Devices", ("has_attention", True)
     ),
-    "watch_gravity": Facet("Gravity vorhanden", "Signale", ("has_gravity", True)),
+    "watch_gravity": Facet("Watch gravity", "Signals", ("has_gravity", True)),
     "watch_quaternion": Facet(
-        "Smartwatch-Quaternion", "Signale", ("has_quaternion", True)
+        "Watch quaternion", "Signals", ("has_quaternion", True)
     ),
     "head_gravity": Facet(
-        "Kopf-Gravity", "Signale", ("has_head_gravity", True)
+        "Head gravity", "Signals", ("has_head_gravity", True)
     ),
     "head_quaternion": Facet(
-        "Kopf-Quaternion", "Signale", ("has_head_quaternion", True)
+        "Head quaternion", "Signals", ("has_head_quaternion", True)
     ),
-    "head_gyro": Facet("Kopf-Gyroskop", "Signale", ("has_head_gyro", True)),
+    "head_gyro": Facet("Head gyroscope", "Signals", ("has_head_gyro", True)),
     "watch_raw_acceleration": Facet(
-        "Smartwatch-Rohbeschleunigung", "Signale", ("has_watch_rawaccel", True)
+        "Watch raw acceleration", "Signals", ("has_watch_rawaccel", True)
     ),
     "watch_50_hz": Facet(
-        "Smartwatch-Nennrate 50 Hz", "Erfassung", ("watch_hz_nominal", 50.0)
+        "Watch nominal rate 50 Hz", "Acquisition", ("watch_hz_nominal", 50.0)
     ),
     "watch_100_hz": Facet(
-        "Smartwatch-Nennrate 100 Hz", "Erfassung", ("watch_hz_nominal", 100.0)
+        "Watch nominal rate 100 Hz", "Acquisition", ("watch_hz_nominal", 100.0)
     ),
     "acceleration_user": Facet(
-        "Beschleunigung ohne Gravity", "Erfassung", ("accel_semantics", "user")
+        "Acceleration without gravity", "Acquisition", ("accel_semantics", "user")
     ),
     "acceleration_total": Facet(
-        "Beschleunigung inklusive Gravity", "Erfassung", ("accel_semantics", "total")
+        "Acceleration including gravity", "Acquisition", ("accel_semantics", "total")
     ),
     "study_recording": Facet(
-        "Studienaufnahme", "Studieninformation", ("study_mode", "study")
+        "Study recording", "Study", ("study_mode", "study")
     ),
 }
 

@@ -71,18 +71,18 @@ def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
     async def scenario():
         app = DatasetExplorerApp(root, export_path=tmp_path / "selection.json")
         async with app.run_test() as pilot:
-            assert "3 Aufnahmen" in count_text(app)
+            assert "3 of 3 recordings" in count_text(app)
             labels = {str(box.label) for box in app.query(Checkbox)}
             assert "Smartwatch" in labels
-            assert "Gravity vorhanden" in labels
+            assert "Watch gravity" in labels
 
             await pilot.click("#facet-smartwatch")
             await pilot.pause()
-            assert "2 Aufnahmen" in count_text(app)
+            assert "2 of 3 recordings" in count_text(app)
 
             await pilot.click("#facet-watch_gravity")
             await pilot.pause()
-            assert "1 Aufnahme" in count_text(app)
+            assert "1 of 3 recording " in count_text(app)
 
     asyncio.run(scenario())
 
@@ -148,3 +148,31 @@ def test_copy_action_and_provenance_details_are_separate_from_overview(tmp_path,
             assert "protocol-a" in details
 
     asyncio.run(scenario())
+
+
+def test_reset_clears_facets_and_preview_is_naturally_sorted(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection.json")
+        async with app.run_test() as pilot:
+            await pilot.click("#facet-smartwatch")
+            await pilot.pause()
+            assert "2 of 3 recordings" in count_text(app)
+            assert "has_watch" in str(app.query_one("#query", Static).render())
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert "3 of 3 recordings" in count_text(app)
+            assert all(not box.value for box in app.query(Checkbox))
+
+    asyncio.run(scenario())
+
+
+def test_natural_sort_key_orders_numbered_ids_numerically():
+    from focuswatch_dataset.tui import _natural_key
+
+    ids = ["AIRPODS-P10", "AIRPODS-P2", "AIRPODS-P1", "ML4SCS-S008"]
+    assert sorted(ids, key=_natural_key) == [
+        "AIRPODS-P1", "AIRPODS-P2", "AIRPODS-P10", "ML4SCS-S008"
+    ]

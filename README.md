@@ -90,16 +90,17 @@ semantics. Use the manifest and `channels.parquet` to make a deliberate choice.
 ## Explore the manifest in the terminal
 
 The optional terminal UI filters only manifest metadata; it does not load or
-export sensor samples. Its German-labelled facets update the recording count
-live and can export the selected manifest rows with a reproducible pandas
-query.
+export sensor samples. Plain-language facets (devices, signals, acquisition
+settings) update the recording count live, show the equivalent pandas query,
+and can export the selected manifest rows together with that query.
 
 ```bash
 fw explore DATASET_ROOT --export focuswatch-selection.json
 ```
 
-Press `e` to export, `c` to copy the query, `p` for provenance details, and `q`
-to quit.
+Press `e` to export, `c` to copy the query, `r` to reset all filters, `p` for
+provenance details (cohort, protocol, source pipeline, build SHA), and `q` to
+quit.
 
 ## Reproducibility and validation
 
