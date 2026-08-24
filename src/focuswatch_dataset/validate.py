@@ -11,6 +11,9 @@ import pandas as pd
 from . import schema as S
 from .adapters.base import RecordingBundle, RecordingRef
 from .physics import angle_deg, gravity_from_quaternion, norm_stats, still_mask
+from .redact import (
+    RedactionPolicy, XY_COLUMNS, _free_writing_spans, _has_task_structure,
+)
 from .time_axis import median_rate_hz
 from .write import read_table, table_metadata
 
@@ -606,6 +609,64 @@ def _validate_archive_descriptors(bundle: RecordingBundle, channels: pd.DataFram
                 )
 
 
+def _archive_redaction_policy(manifest: pd.DataFrame) -> RedactionPolicy:
+    valid = {policy.value: policy for policy in RedactionPolicy}
+    observed = manifest["redaction_policy"].tolist()
+    unknown = sorted({repr(value) for value in observed if value not in valid})
+    if unknown:
+        raise ValueError(
+            "sessions.parquet: unknown redaction_policy value(s): " + ", ".join(unknown)
+        )
+    policies = {valid[value] for value in observed}
+    if len(policies) != 1:
+        values = sorted(policy.value for policy in policies)
+        raise ValueError(
+            "sessions.parquet: redaction_policy must be consistent across archive rows; "
+            f"found {values}"
+        )
+    return next(iter(policies))
+
+
+def _has_stored_coordinates(pen: pd.DataFrame, rows=None) -> bool:
+    columns = [column for column in XY_COLUMNS if column in pen.columns]
+    if not columns:
+        return False
+    selected = pen.loc[rows, columns] if rows is not None else pen[columns]
+    return bool(selected.notna().any().any())
+
+
+def _validate_archive_redaction(bundle: RecordingBundle, policy: RedactionPolicy) -> None:
+    pen = bundle.tables.get("pen")
+    if pen is None or policy == RedactionPolicy.NONE:
+        return
+
+    recording_id = bundle.ref.recording_id
+    if policy == RedactionPolicy.ALL_XY:
+        if _has_stored_coordinates(pen):
+            raise ValueError(
+                f"pen/{recording_id}.parquet: stored coordinates violate "
+                "redaction_policy 'all_xy'"
+            )
+        return
+
+    markers = bundle.tables.get("markers")
+    if not _has_task_structure(markers):
+        if _has_stored_coordinates(pen):
+            raise ValueError(
+                f"pen/{recording_id}.parquet: stored coordinates require marker task "
+                "structure under redaction_policy 'free_writing_xy'"
+            )
+        return
+
+    for lo, hi in _free_writing_spans(markers):
+        span = pen[S.TIME_COLUMN].between(lo, hi)
+        if _has_stored_coordinates(pen, span):
+            raise ValueError(
+                f"pen/{recording_id}.parquet: stored coordinates in free-writing span "
+                f"[{lo}, {hi}] violate redaction_policy 'free_writing_xy'"
+            )
+
+
 def validate_dataset(root: Path | str) -> ValidationReport:
     """Revalidate a published archive from its manifest, channels, and Parquet tables.
 
@@ -643,6 +704,7 @@ def validate_dataset(root: Path | str) -> ValidationReport:
     )
     if duplicate_ids:
         raise ValueError(f"sessions.parquet: duplicate recording_id values: {', '.join(duplicate_ids)}")
+    redaction_policy = _archive_redaction_policy(manifest)
 
     report = ValidationReport()
     for problem in check_manifest_consistency(manifest, root):
@@ -665,6 +727,7 @@ def validate_dataset(root: Path | str) -> ValidationReport:
                     f"expected {expected_manifest[column]!r} from stored tables"
                 )
         _validate_archive_descriptors(bundle, channels, table_column_descriptor_values)
+        _validate_archive_redaction(bundle, redaction_policy)
         report.findings += validate_bundle(bundle, bundle_dropouts)
         dropouts[bundle.ref.recording_id] = bundle_dropouts
 

@@ -376,7 +376,8 @@ from focuswatch_dataset import load_manifest, load_recording
 root = "focuswatch-dataset-v1.0"
 m = load_manifest(root)
 
-m.query("has_watch and has_pen and watch_hz_nominal == 100 and has_gravity")
+m.query("has_watch and has_pen and watch_hz_nominal == 100 and "
+        "has_gravity and accel_semantics == 'user'")
 m.query("has_watch and accel_semantics == 'user'")
 m.query("has_headimu")
 m.query("has_watch_rawaccel")
@@ -390,7 +391,7 @@ Laden mehrerer Tabellen gibt es `examples/select_and_load.py`:
 
 ```bash
 python examples/select_and_load.py focuswatch-dataset-v1.0 \
-  --require-pen --modality watch --limit 10
+  --require-pen --modality watch --accel-semantics user --limit 10
 ```
 
 Das Beispiel liest zuerst ausschließlich `sessions.parquet` und filtert die

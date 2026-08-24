@@ -12,6 +12,7 @@ from focuswatch_dataset.cli import main
 from focuswatch_dataset.load import load_manifest
 from focuswatch_dataset.manifest import check_manifest_consistency
 from focuswatch_dataset.redact import RedactionPolicy
+from focuswatch_dataset.validate import validate_dataset
 from focuswatch_dataset.write import read_table, write_table
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 
@@ -212,6 +213,78 @@ def test_cli_build_and_validate(tmp_path):
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
     assert main(["validate", "--dataset", str(out)]) == 0
+
+
+def test_cli_validate_rejects_an_unknown_archive_redaction_policy(tmp_path):
+    """A manifest typo must not turn a declared redaction into an unchecked label."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    manifest["redaction_policy"] = "all_x"
+    manifest.to_parquet(out / "sessions.parquet", index=False)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_validate_archive_requires_one_consistent_redaction_policy(tmp_path):
+    """One build has one policy; per-row policy drift makes the archive ambiguous."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out, policy=RedactionPolicy.ALL_XY)
+    manifest = load_manifest(out)
+    manifest.loc[manifest.index[0], "redaction_policy"] = RedactionPolicy.NONE.value
+    manifest.to_parquet(out / "sessions.parquet", index=False)
+
+    with pytest.raises(ValueError, match="redaction_policy.*consistent"):
+        validate_dataset(out)
+
+
+def test_cli_validate_rejects_a_restored_coordinate_under_all_xy(tmp_path):
+    """The stored pen table must still satisfy the archive's declared all-XY policy."""
+    out = tmp_path / "out"
+    root = tmp_path / "src" / "ml4scs"
+    write_ml4scs(root)
+    build_dataset({"ml4scs": root}, out, policy=RedactionPolicy.ALL_XY)
+    path = next((out / "pen").glob("*.parquet"))
+    pen = read_table(path)
+    pen.loc[pen.index[0], ["x", "y"]] = [1.0, 2.0]
+    write_table(pen, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_a_restored_coordinate_in_a_free_writing_span(tmp_path):
+    """Free-writing spans are rechecked from the archived marker and pen tables."""
+    out = tmp_path / "out"
+    root = tmp_path / "src" / "ml4scs"
+    write_ml4scs(root)
+    marker_source = root / "markers" / "S096_markers.csv"
+    markers = pd.read_csv(marker_source)
+    markers["task_id"] = "free_writing"
+    markers["task_name"] = "Free writing"
+    markers.to_csv(marker_source, index=False)
+    build_dataset({"ml4scs": root}, out, policy=RedactionPolicy.FREE_WRITING_XY)
+    path = next((out / "pen").glob("*.parquet"))
+    pen = read_table(path)
+    assert pen.loc[pen.index[0], ["x", "y"]].isna().all()
+    pen.loc[pen.index[0], ["x", "y"]] = [1.0, 2.0]
+    write_table(pen, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_coordinates_without_free_writing_task_structure(tmp_path):
+    """The conservative fallback requires all coordinates blank when tasks are unknown."""
+    out = tmp_path / "out"
+    root = tmp_path / "src" / "sensorlogger"
+    write_sl(root)
+    build_dataset({"sensorlogger": root}, out, policy=RedactionPolicy.FREE_WRITING_XY)
+    path = next((out / "pen").glob("*.parquet"))
+    pen = read_table(path)
+    assert pen[["x", "y"]].isna().all().all()
+    pen.loc[pen.index[0], ["x", "y"]] = [1.0, 2.0]
+    write_table(pen, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
 
 
 def test_cli_validate_rejects_a_table_with_the_wrong_embedded_recording_id(tmp_path):

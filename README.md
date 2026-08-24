@@ -16,7 +16,8 @@ After installation, select from the published manifest and load samples
 explicitly with the reproducible example:
 
 ```bash
-python examples/select_and_load.py DATASET_ROOT --require-pen --modality watch
+python examples/select_and_load.py DATASET_ROOT --require-pen --modality watch \
+  --accel-semantics user
 ```
 
 The example reads only `sessions.parquet` while applying its filters. It calls
@@ -29,7 +30,9 @@ The same metadata-first selection is available directly in Python:
 from focuswatch_dataset import load_manifest, load_recordings
 
 manifest = load_manifest("DATASET_ROOT")
-selected = manifest.query("has_watch and has_pen and watch_hz_nominal == 100")
+selected = manifest.query(
+    "has_watch and has_pen and watch_hz_nominal == 100 and accel_semantics == 'user'"
+)
 recording_ids = selected["recording_id"].tolist()
 samples = load_recordings("DATASET_ROOT", recording_ids, modality="watch")
 ```

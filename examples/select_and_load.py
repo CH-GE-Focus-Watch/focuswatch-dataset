@@ -2,7 +2,7 @@
 
 Usage::
 
-    python examples/select_and_load.py DATASET_ROOT --require-pen
+    python examples/select_and_load.py DATASET_ROOT --require-pen --accel-semantics user
 
 The first phase reads only ``sessions.parquet``. Sensor rows are not read until
 the selected recording IDs are passed explicitly to ``load_recordings``.
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cohort",
-        help="select one cohort (for example, ML4SCS or ETH-SL)",
+        help="select one cohort (for example, ML4SCS or ETH)",
     )
     parser.add_argument(
         "--require-pen",
@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         default="watch",
         choices=("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention"),
         help="sensor table to load after selection (default: watch)",
+    )
+    parser.add_argument(
+        "--accel-semantics",
+        choices=("user", "total"),
+        default="user",
+        help="watch acceleration semantics to select (default: user)",
     )
     parser.add_argument(
         "--limit",
@@ -61,6 +67,9 @@ def main() -> int:
         flags["cohort"] = args.cohort
     if args.require_pen:
         flags["has_pen"] = True
+    flags[f"has_{args.modality}"] = True
+    if args.modality == "watch":
+        flags["accel_semantics"] = args.accel_semantics
     selected = by_flags(manifest, **flags)
     recording_ids = selected["recording_id"].tolist()
     if args.limit is not None:
