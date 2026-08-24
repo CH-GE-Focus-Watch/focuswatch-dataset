@@ -58,7 +58,7 @@ class EgeAdapter:
         # pen_paper_info and pen_session_sync carry no position,
         # so neither belongs in pen/ - both route to markers/ instead,
         # matching what the SensorLogger adapter already does with
-        # pen_session_sync (DESIGN §8.1). They come from a different source
+        # pen_session_sync. They come from a different source
         # file (pen_events.csv, not events.csv) so are merged here rather
         # than produced by _markers directly.
         combined = pd.concat([t for t in (session_markers, pen_markers) if t is not None],
@@ -83,7 +83,7 @@ class EgeAdapter:
             "accel_still_bias": self._still_bias(watch),
             "gravity_source": "none",
             # The backend stamps every modality on the same wall
-            # clock for this cohort (DESIGN §5.0's shared_clock regime), so
+            # clock for this cohort, so
             # every table this adapter emits gets the identical domain -
             # declared per modality anyway, so a future modality with a
             # genuinely different clock cannot inherit this one by omission.
@@ -96,7 +96,7 @@ class EgeAdapter:
             # session-relative millisecond offset, not a wall-clock reading -
             # no clock name would be honest for it. pen.src_timestamp is
             # structurally present but always NaN for this generation-A
-            # source (no pen-device clock in the export, DESIGN §5.0); the
+            # source (no pen-device clock in the export); the
             # domain it WOULD be on, were it ever populated, is the same
             # physical thing SensorLogger's generation-B src_timestamp is -
             # declared for schema consistency across the two pen adapters,

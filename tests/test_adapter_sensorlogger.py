@@ -275,8 +275,8 @@ def test_missing_raw_accel_is_reported_not_faked(tmp_path):
 
 def test_participant_id_comes_from_session_start_payload_not_directory_name(tmp_path):
     """Real SL directories carry session suffixes (E1_session3,
-    focuswatch_T10_s1_d7498f51) that are not DESIGN §2.2's `ETH-T8` token
-    form - the participant id must come from the session's own stated token,
+    focuswatch_T10_s1_d7498f51) that are not participant identifiers - the
+    participant id must come from the session's own stated token,
     not a directory-name parse."""
     write_fixture(tmp_path, sid="E1_session3_d7498f51", participant_id="E1")
     ref = SensorLoggerAdapter().discover(tmp_path)[0]

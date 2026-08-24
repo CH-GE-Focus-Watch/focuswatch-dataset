@@ -32,7 +32,7 @@ from focuswatch_dataset.explore import (
 
 
 def test_top_level_import_exposes_every_advertised_symbol():
-    """The exact import DESIGN §7.1 shows must work, not merely a submodule
+    """The advertised import must work, not merely a submodule
     import - a reuser who copies that snippet gets what it says, not
     ImportError."""
     assert fw.load_manifest is _load_manifest

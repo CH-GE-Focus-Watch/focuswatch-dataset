@@ -43,7 +43,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-For the optional interactive terminal explorer, install the `tui` extra:
+For the terminal explorer, install the `tui` extra:
 
 ```bash
 pip install -e ".[tui]"
@@ -55,22 +55,54 @@ Obtain the separately distributed dataset bundle and set `DATASET_ROOT` to its
 directory. A bundle contains `sessions.parquet`, `channels.parquet`,
 `validation_report.json`, and the modality directories described above.
 
-Start by inspecting the manifest:
+### Explore and export a subset
+
+The terminal explorer is the recommended starting point. It filters the
+manifest with plain-language facets and updates the matching recording count
+live. Press `e` to export a ready-to-use subset containing filtered
+`sessions.parquet`, `channels.parquet`, `selection.json`, and the selected
+sensor files.
+
+```bash
+fw explore DATASET_ROOT
+```
+
+Exports are created in a new timestamped folder in Downloads when that folder
+exists; otherwise they are created in the current terminal directory. The TUI
+prints the exact path after completion. To choose a different location, pass a
+path for a **new** folder:
+
+```bash
+fw explore DATASET_ROOT --export PATH/TO/new-selection
+```
+
+`--export` never overwrites an existing folder. The export copies the selected
+raw modality tables plus the metadata needed to use them. Apply at least one
+filter before exporting: with no filters, the explorer selects all recordings
+and can copy the whole archive. Press `c` to copy the equivalent pandas query,
+`r` to reset filters, `p` for provenance details, and `q` to quit.
+
+### Inspect or script against the bundle
+
+Inspect the manifest and verify the archive:
 
 ```bash
 fw report --dataset DATASET_ROOT
 fw validate --dataset DATASET_ROOT
 ```
 
-Select recordings by metadata, then load only the samples you requested:
+The Python example demonstrates metadata-first selection, then loads a small,
+explicit subset of samples:
 
 ```bash
 python examples/select_and_load.py DATASET_ROOT --require-pen --modality watch \
-  --accel-semantics user
+  --accel-semantics user --limit 10
 ```
 
 The example reads only `sessions.parquet` during selection and loads sensor rows
-only after the recording IDs are known. The equivalent Python workflow is:
+only after the recording IDs are known. Increase or omit `--limit` only when
+you intentionally want to load more data into memory. The equivalent Python
+workflow is:
 
 ```python
 from focuswatch_dataset import load_manifest, load_recordings
@@ -86,24 +118,6 @@ samples = load_recordings(
 
 `load_recordings` refuses to silently mix incompatible watch acceleration
 semantics. Use the manifest and `channels.parquet` to make a deliberate choice.
-
-## Explore the manifest in the terminal
-
-The optional terminal UI filters the manifest and exports a ready-to-use subset
-of the selected recordings. Plain-language facets (modalities, signals, and
-acquisition settings) update the recording count live and show the equivalent
-pandas query. Press `e` to create a selection folder in Downloads containing
-filtered `sessions.parquet`, `channels.parquet`, `selection.json`, and the
-selected sensor files.
-
-```bash
-fw explore DATASET_ROOT
-```
-
-The TUI shows the full export path after completion. To choose another target
-directory, pass `--export DIRECTORY`. Press `c` to copy the query, `r` to reset
-all filters, `p` for provenance details (cohort, protocol, source pipeline,
-build SHA), and `q` to quit.
 
 ## Reproducibility and validation
 
@@ -141,10 +155,3 @@ The software in this repository is licensed under Apache-2.0; see
 Citation metadata for the software is in [`CITATION.cff`](CITATION.cff). The
 dataset DOI and final author metadata remain placeholders until the public
 archive is released.
-
-## Further documentation
-
-- [`docs/DESIGN.md`](docs/DESIGN.md) explains the canonical schema, validation,
-  and release decisions.
-- [`examples/select_and_load.py`](examples/select_and_load.py) is the
-  executable metadata-first loading example.

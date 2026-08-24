@@ -1,10 +1,7 @@
-"""Public consumer API for a published focuswatch-dataset bundle.
+"""Public consumer API for a focuswatch-dataset bundle.
 
-See docs/DESIGN.md §7.1 for the intended usage. Everything here is a thin
-re-export - the implementations live in `load.py`, `select.py` and
-`convert.py`, which stay importable on their own for internal callers
-(`build.py`, `cli.py`) that would otherwise pay for this package's `__init__`
-to run before the bundle it is building even exists.
+This module is a thin re-export. Internal build modules import the underlying
+implementations directly so a build does not require this public API to load.
 """
 from __future__ import annotations
 

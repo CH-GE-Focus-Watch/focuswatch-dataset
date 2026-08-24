@@ -1,6 +1,6 @@
 """I15: one modality, two schemas - `markers/` must carry the same canonical
 columns and dtypes regardless of which cohort produced the recording.
-`src_`-prefixed columns are the documented exception (docs/DESIGN.md §6):
+`src_`-prefixed columns are the documented exception:
 provenance passthrough is legitimately cohort-specific, so this test scopes
 the "same columns" requirement to everything else.
 """

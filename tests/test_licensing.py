@@ -1,6 +1,4 @@
-"""I12: DESIGN §10 commits to Apache-2.0 for the code and CC BY 4.0 for the
-data, plus a CITATION.cff - none of the three existed before this fix.
-"""
+"""Software and dataset licensing must remain distinct and citable."""
 from __future__ import annotations
 
 import tomllib

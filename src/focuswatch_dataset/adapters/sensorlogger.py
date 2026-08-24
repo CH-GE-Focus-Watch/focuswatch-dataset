@@ -88,8 +88,7 @@ class SensorLoggerAdapter:
         """Return the participant id from session_start's payload.
 
         Never parsed from the directory name - real directories carry
-        session suffixes (`E1_session3`, `focuswatch_T10_s1_d7498f51`) that
-        are not DESIGN §2.2's `ETH-T8` token form. Fails loudly rather than
+        session suffixes. Fails loudly rather than
         falling back to a directory-name guess: the two ETH participant
         namespaces are disjoint, which only holds if the
         published token is the one the session itself states.
@@ -148,7 +147,7 @@ class SensorLoggerAdapter:
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",
             # This backend stamps every modality on the same wall
-            # clock (DESIGN §5.0's shared_clock regime) - declared per
+            # clock - declared per
             # modality, like the ege adapter, not once for the whole recording.
             "time_domain_by_modality": {
                 "watch": "backend_wall_clock", "headimu": "backend_wall_clock",

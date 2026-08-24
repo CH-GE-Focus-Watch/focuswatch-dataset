@@ -67,8 +67,7 @@ def load_recordings(root: Path | str, recording_ids: list[str],
     so a silent concatenation would hide a real difference in what the
     numbers mean. Call `convert.to_user_acceleration` first, or restrict the
     selection to one semantics. The guard is scoped to `watch` because
-    `accel_semantics` documents that stream specifically (see
-    `docs/DESIGN.md`'s manifest section) - it would misfire on, say, two
+    `accel_semantics` documents that stream specifically - it would misfire on, say, two
     recordings' `pen` tables that happen to disagree about watch semantics
     neither table carries.
     """

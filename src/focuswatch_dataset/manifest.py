@@ -149,7 +149,7 @@ def _task_counts(markers: pd.DataFrame | None) -> tuple[int | None, int | None]:
     return int((cats == "writing").sum()), int((cats == "idle").sum())
 
 
-# Why: the recording-level time_domain column (DESIGN §7) names the primary
+# Why: the recording-level time_domain column names the primary
 # motion stream's clock - watch when a recording has one, headimu for the
 # watch-less AirPods cohort. Picking from time_domain_by_modality rather than
 # trusting a second, independently-declared adapter key is what makes this
@@ -170,7 +170,7 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     Computed from time_domain_by_modality, not hand-written per adapter: a
     modality whose declared clock differs from the primary one is named here
     automatically, so the sentence cannot go stale if a cohort's per-modality
-    domains change. See docs/DESIGN.md §5.0 - ML4SCS is the only
+    domains change. ML4SCS is the only
     estimated_delta cohort today (pen/markers on the server clock, watch on
     its own capture clock), but the derivation does not hardcode that.
     """
@@ -298,7 +298,7 @@ CHANNEL_COLUMNS = (
 # Non-physical signal columns whose actual scale is a genuinely different unit
 # per recording (Moleskine's ncode grid vs. the ETH web app's own pixel/force
 # scale, and within ETH a further split by export generation - see
-# schema.PEN_XY_UNIT_GEN_A/B). DESIGN §6 is explicit that channels.parquet's
+# schema.PEN_XY_UNIT_GEN_A/B). channels.parquet's
 # `unit` cell for these stays the closed-vocabulary "device_native" - the
 # per-recording scale label lives ONLY in the manifest
 # (pen_xy_unit/pen_pressure_scale), read from meta[meta_key] there. The
@@ -321,7 +321,7 @@ _PEN_SCALE_COLUMNS: dict[str, tuple[str, str]] = {
 # for readability; any column this table has never heard of - including a
 # future one - still gets a non-empty (unit, semantics) from the fallback in
 # _describe_column, so build_channels can never emit a blank cell. Vocabulary
-# glossary (see also docs/DESIGN.md's channels.parquet section):
+# glossary:
 #   category  - one of a fixed, enumerated set of string values
 #   ordinal   - the position of an item within a sequence, not a magnitude
 #   device_native - raw values in whatever unit the source stream itself
@@ -356,7 +356,7 @@ def _describe_column(column: str, quantity: S.Quantity | None,
 
     Physical quantities come from schema.UNITS. Time columns (the primary
     axis and interval endpoints) are nanoseconds. Pen x/y/pressure are
-    "device_native" here (DESIGN §6's closed vocabulary) - their actual
+    "device_native" here - their actual
     per-recording scale is a manifest fact, not a `unit`-cell fact; look it
     up via _PEN_SCALE_COLUMNS' meta key (published in data_dictionary.md's
     "Pen coordinate/pressure units by recording" table). Other known

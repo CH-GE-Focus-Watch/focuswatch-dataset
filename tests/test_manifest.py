@@ -140,7 +140,7 @@ def test_channels_time_domain_column_override_wins_and_default_still_applies():
 
 def test_channels_publish_device_native_for_pen_scale_columns_regardless_of_cohort():
     """Fix round C item 2: channels.parquet's `unit` cell for pen x/y/pressure
-    must stay the closed-vocabulary "device_native" (DESIGN §6) no matter what
+    must stay the closed-vocabulary "device_native" no matter what
     per-recording scale the adapter declares. The pre-fix behaviour
     (`meta.get(meta_key) or "device_native"`) leaked the per-recording label
     itself (`ncode_grid`, `webapp_raw`, ...) into this cell - six values the

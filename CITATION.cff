@@ -1,7 +1,5 @@
-# Citation metadata for THIS CODE REPOSITORY (Apache-2.0). The published
-# dataset itself (CC BY 4.0) is a separate archive with its own citation -
-# see docs/DESIGN.md §10 for the license split and the data descriptor
-# article for the dataset DOI once it exists.
+# Citation metadata for this Apache-2.0 software repository. The separately
+# published CC BY 4.0 dataset archive will have its own citation and DOI.
 cff-version: 1.2.0
 message: If you use this software, please cite it as below.
 type: software

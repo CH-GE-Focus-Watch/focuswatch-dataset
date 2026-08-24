@@ -315,7 +315,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
     # motion table actually carries - "total" implies accel_total_*, "user"
     # implies accel_user_*. Checked against watch when present, else headimu
     # (AirPods' only motion stream) - the same modality accel_semantics
-    # describes per DESIGN §7. Makes the column-names-carry-semantics
+    # describes. Makes the column-names-carry-semantics
     # invariant structural, not just declarative. Emitted whenever a motion
     # table exists, regardless of whether `semantics` resolves - an
     # unrecognised value (empty string, a typo, a future third value) must
@@ -419,7 +419,7 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
                 require(modality, "time_magnitude", f"{flag} is true")
 
         # Why: has_gravity/has_quaternion are the Watch-Capabilities fields
-        # (docs/DESIGN.md) and describe the watch/ stream specifically;
+        # and describe the watch/ stream specifically;
         # has_head_gravity/has_head_quaternion/has_head_gyro are the separate
         # Head-Capabilities trio and describe the headimu stream.
         for flag, check in _CAPABILITY_CHECKS:

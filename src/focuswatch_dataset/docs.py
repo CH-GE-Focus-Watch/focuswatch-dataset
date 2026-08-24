@@ -1,8 +1,4 @@
-"""Generated bundle documentation. Both files derive from the manifest/channels
-tables actually written to `out`, never from a hand-maintained file list - so
-the docs cannot drift from what is on disk (see build.py's module docstring
-and the plan's property 4).
-"""
+"""Generated documentation for a dataset bundle."""
 from __future__ import annotations
 
 import json
@@ -76,7 +72,7 @@ def _modality_file_counts(out: Path) -> dict[str, int]:
 
 
 def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
-    """Bundle entry point + recipe chapters (DESIGN §4).
+    """Write the bundle README and recipe chapters.
 
     Every count below is read from `manifest`/`channels`/`out` itself - not
     restated, so it cannot drift from the archive it describes.
@@ -159,11 +155,8 @@ _UNIT_VOCABULARY = (
     ("ordinal", "the position of an item within a sequence, not a magnitude "
                "(e.g. `task_index`)."),
     ("device_native", "a raw value in the source stream's own scale. For pen `x`/`y`/"
-                      "`pressure` the actual scale is a genuinely different unit per "
-                      "recording, not a fixed constant - look up `pen_xy_unit`/"
-                      "`pen_pressure_scale` in the per-recording table below (Moleskine's "
-                      "Ncode grid and the ETH web app's own pixel/force scale are unrelated "
-                      "scales that happen to share a column name)."),
+                      "`pressure`, consult that recording's `pen_xy_unit` and "
+                      "`pen_pressure_scale` in `sessions.parquet`."),
     ("source_native", "a `src_`-prefixed provenance passthrough column: the source "
                       "device's own value, kept for audit, never reinterpreted or rescaled."),
     ("n/a", "no physical or source unit applies (e.g. a categorical id)."),
@@ -172,25 +165,15 @@ _UNIT_VOCABULARY = (
 # Fixed time-domain overrides for src_-prefixed provenance columns. A
 # modality's primary clock remains adapter-defined.
 _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
-    (S.TIME_DOMAIN_PEN_DEVICE_CLOCK, "the pen hardware's own free-running clock - unaligned to "
-                                     "any wall clock in this bundle. Moleskine's own device clock "
-                                     "for ML4SCS, and SensorLogger generation-B's pen-event "
-                                     "clock (`payload.timestamp`) for ETH E1/E2/E3. Measured "
-                                     "~749-923 days off the modality's wall clock; metadata only, "
-                                     "never used to join or align."),
+    (S.TIME_DOMAIN_PEN_DEVICE_CLOCK, "the pen hardware's free-running clock. It is not aligned "
+                                     "to a bundle wall clock and must not be used for joins."),
     (S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS, "milliseconds since this recording's own session "
                                                "start - not a wall-clock reading at all, so no "
                                                "clock name would be honest."),
-    (S.TIME_DOMAIN_PHONE_WALL_CLOCK, "the iPhone bridge's own wall clock (ML4SCS "
-                                     "`src_phone_received_at`) - a third device, distinct from "
-                                     "both the watch capture clock and the server clock."),
-    (S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK, "a free-running uptime clock (seconds since device "
-                                           "boot), never reset to a wall-clock epoch - AirPods "
-                                           "`src_sensor_timestamp_s`."),
+    (S.TIME_DOMAIN_PHONE_WALL_CLOCK, "a phone bridge wall clock, distinct from the motion "
+                                     "device's capture clock."),
+    (S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK, "a free-running uptime clock, not a wall-clock epoch."),
 )
-
-# Ege pen-event columns; its export has neither tilt nor a pen-device clock.
-_EGE_PEN_EVENTS_HEADER = "id, session_id, t_ms, t_session_ms, type, x, y, force, created_at"
 
 
 def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
@@ -207,18 +190,11 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
              "`pen_device_clock` because that is what its numbers are, while",
              "`pen.pressure` carries the modality's own clock because that is when it",
              "was measured. What a column holds is stated by `quantity` and `unit`, not",
-             "by this field.",
-             "It is not given by `sessions.parquet`'s recording-level `time_domain`",
-             "alone, which names only the primary motion stream's clock and can differ from",
-             "other modalities AND from a modality's own `src_`-prefixed provenance",
-             "columns, which are frequently on a different clock than the modality's own",
-             "canonical `t_ns`/`t_start_ns`/`t_end_ns` axis (e.g. a pen device's own",
-             "clock, or a session-relative offset rather than a wall clock at all - see",
-             "the Time domain vocabulary section below). For a recording with",
-             "`time_alignment = \"estimated_delta\"`, read its `alignment_note` before",
-             "assuming any two",
-             "modalities share a clock: the offset between them is estimated but not",
-             "published, and `pen_delta_sigma` is that estimate's confidence, not its value.", "",
+             "by this field. The recording-level `time_domain` in `sessions.parquet` names",
+             "only the primary motion stream. Consult `channels.parquet` before joining",
+             "modalities or provenance timestamps. For `time_alignment = \"estimated_delta\"`,",
+             "read `alignment_note`; `pen_delta_sigma` is the estimate's confidence, not an",
+             "offset value.", "",
              "Pen rows with `x = y = -1` are framing events without a position. They are",
              "retained deliberately; treating them as measurements skews any positional statistic.", "",
              "## Unit vocabulary", "",
@@ -230,51 +206,23 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
 
     lines += [
         "", "## Time domain vocabulary", "",
-        "A modality's own `time_domain` default (e.g. `watch_capture_clock`, "
-        "`server_wall_clock`, `backend_wall_clock`, `device_wall_clock`) names a specific "
-        "pipeline's clock and is open-ended by design, not a closed set. A `src_`-prefixed "
-        "provenance column can be on a genuinely different clock than its modality's own "
-        "canonical time axis, though, and gets an EXPLICIT per-column override in that case "
-        "(the Channels table below reflects it). The override value is either ANOTHER clock "
-        "already named elsewhere in this bundle (e.g. ML4SCS's `watch.src_local_ts_ms` and "
-        "`watch.src_server_received_ms` are overridden to `server_wall_clock` - the same "
-        "clock `pen`/`markers` already use, just not `watch`'s own default), or one of these "
-        "five dedicated terms for a clock (or non-clock) that no modality default already "
-        "names:", "",
+        "A modality's default `time_domain` names its capture pipeline clock. A `src_` "
+        "provenance column may use a different clock and therefore has an explicit "
+        "per-column override in the Channels table. The following terms describe those "
+        "overrides:", "",
         "| value | meaning |", "|---|---|"]
     for value, meaning in _TIME_DOMAIN_OVERRIDE_VOCABULARY:
         lines.append(f"| `{value}` | {meaning} |")
 
     lines += [
-        "", "## Pen tilt and the pen-device clock: generation-B ETH only", "",
-        "Moleskine (ML4SCS) carries real tilt from its own pen hardware - this section is "
-        "about the ETH cohort only. Both ETH pipelines export the same web app's pen events, "
-        "but the corpus mixes two export generations (see the adapter split for "
-        "`pen_events`/`events` keys). WITHIN the ETH cohort, tilt (`tilt_x`/`tilt_y`) and the "
-        "pen-device clock (`src_timestamp`) exist ONLY for the three generation-B ETH "
-        "SensorLogger recordings (E1, E2, E3). Ege's own export and "
-        "the four generation-A recordings SensorLogger also carries (S3, T8, T9, T10) have "
-        "neither in their source - the real Ege `pen_events.csv` header is:", "",
-        f"```\n{_EGE_PEN_EVENTS_HEADER}\n```", "",
-        "so `tilt_x`, `tilt_y` and `src_timestamp` are NaN there BY NATURE (the source never "
-        "measured them), not by loss in this pipeline.", "",
-        "## Pen coordinate scale: occasional far-scale samples, not a millimetre unit", "",
-        "ETH pen `x`/`y` occasionally jump scale within a single recording. Measured on the "
-        "actual corpus: `ETH-SL-E1_session3`'s `x` spans 5.69 … 16416.00 - 18,846 of "
-        "18,848 samples sit in [5.69, 63.55] and the remaining 2 sit at exactly 16416.00, "
-        "≈258× the low cluster's maximum (`ETH-SL-E2_session6` shows the same "
-        "pattern, ≈260×, on 4 of 7,130 samples). `ETH-EGE-T6`'s `y` shows the same "
-        "phenomenon as a substantial cluster rather than a handful of points: 149 samples "
-        "confined to [2048.01, 3072.83] end within 0.255 s of a `pen_paper_info` marker "
-        "event, immediately followed by 2,367 samples in [8704.57, 34816.62] - consistent "
-        "with a page or section change. Plotting a recording's raw strokes without "
-        "segmenting will flatten the main cluster to a line under the far-scale points. For "
-        "generation-A recordings, segment on `pen_paper_info` events (`markers/`) to find "
-        "the transitions; generation-B recordings (E1/E2/E3) never carry `pen_paper_info` "
-        "at all, so this cue is unavailable there and far-scale samples must be found by "
-        "inspection instead (e.g. a percentile filter). Do NOT treat any of this as a "
-        "millimetre conversion - no such mapping is established for either pen coordinate "
-        "scale.", ""]
+        "", "## Pen coordinate representation", "",
+        "Pen `x`, `y`, and `pressure` use device-native scales. They are not comparable "
+        "across all recordings and are not a millimetre conversion. Use each recording's "
+        "`pen_xy_unit` and `pen_pressure_scale` from `sessions.parquet` when interpreting "
+        "them. Some recordings do not contain pen tilt or a pen-device timestamp; missing "
+        "values are represented as `NaN`, not inferred. Coordinate scales can also change "
+        "within a recording, so inspect or segment the trace before using positional "
+        "statistics.", ""]
 
     summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))
@@ -284,25 +232,5 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
     for _, r in summary.iterrows():
         lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
                      f"{r.semantics} | {r.time_domain} | {r.recordings} |")
-
-    # Pen channels use `device_native`; their per-recording scale is manifest metadata.
-    pen_rows = manifest.loc[manifest["has_pen"],
-                            ["recording_id", "cohort", "pen_xy_unit", "pen_pressure_scale"]]
-    if len(pen_rows):
-        lines += ["", "## Pen coordinate/pressure units by recording", "",
-                  "`pen_xy_unit`/`pen_pressure_scale` distinguish scales that share the same "
-                  "`x`/`y`/`pressure` column name: Moleskine's own hardware raster "
-                  "(`ncode_grid`/`moleskine_raw`, ML4SCS) and two web-app export generations "
-                  "of the same ETH tool. `webapp_raw`/`webapp_force` is Ege's export and the "
-                  "four SensorLogger recordings sharing its generation-A shape (S3/T8/T9/T10); "
-                  "`sl_webapp_raw`/`sl_webapp_force` is SensorLogger's OWN generation-B export "
-                  "(E1/E2/E3), kept as a distinct label rather than assumed equal - whether the "
-                  "two generations share one underlying coordinate system is unconfirmed, and "
-                  "conflating them would publish that equivalence as fact.", "",
-                  "| recording_id | cohort | pen_xy_unit | pen_pressure_scale |",
-                  "|---|---|---|---|"]
-        for _, r in pen_rows.sort_values("recording_id").iterrows():
-            lines.append(f"| {r.recording_id} | {r.cohort} | {r.pen_xy_unit} | "
-                        f"{r.pen_pressure_scale} |")
 
     (out / "data_dictionary.md").write_text("\n".join(lines) + "\n")
