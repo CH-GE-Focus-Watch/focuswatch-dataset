@@ -295,6 +295,12 @@ def test_cli_validate_rejects_small_published_float_changes(tmp_path):
     # The fixture's 619.96 s duration uses the same near-value mutation as
     # 8713.6 -> 8713.65: both fall inside numpy.isclose's default relative band.
     duration_row = manifest.index[manifest["recording_id"] == "AIRPODS-P1"][0]
+    manifest.loc[duration_row, "duration_s"] = 619.9600000000002
+    manifest.to_parquet(out / "sessions.parquet", index=False)
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+    build_dataset(src, out)
+    manifest = load_manifest(out)
     manifest.loc[duration_row, "duration_s"] = 619.965
     manifest.to_parquet(out / "sessions.parquet", index=False)
     assert main(["validate", "--dataset", str(out)]) == 1
