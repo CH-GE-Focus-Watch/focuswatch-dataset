@@ -56,9 +56,6 @@ FACETS: dict[str, Facet] = {
     "acceleration_total": Facet(
         "Acceleration including gravity", "Acquisition", ("accel_semantics", "total")
     ),
-    "study_recording": Facet(
-        "Study recording", "Study", ("study_mode", "study")
-    ),
 }
 
 

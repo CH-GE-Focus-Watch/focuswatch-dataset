@@ -79,6 +79,7 @@ def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
             labels = {str(box.label) for box in app.query(Checkbox)}
             assert "Smartwatch" in labels
             assert "Watch gravity" in labels
+            assert "Study recording" not in labels
 
             await pilot.click("#facet-smartwatch")
             await pilot.pause()
