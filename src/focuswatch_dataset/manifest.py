@@ -69,6 +69,15 @@ MANIFEST_COLUMNS = (
     "source_pipeline", "schema_version", "redaction_policy", "build_git_sha",
 )
 
+TABLE_DERIVED_MANIFEST_COLUMNS = (
+    *S.MODALITY_FLAGS,
+    *S.CAPABILITY_FLAG_COLUMNS,
+    "watch_hz_measured", "head_hz_measured",
+    "t_start_ns", "t_end_ns", "duration_s",
+    "n_writing_tasks", "n_idle_tasks",
+    "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
+)
+
 # Meta keys that are legitimate for an adapter to emit but are never
 # published: internal bookkeeping consumed elsewhere in the pipeline before
 # the manifest is built (session_start_ns feeds validate_recording's spill
@@ -222,50 +231,51 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     )
 
 
+def table_derived_manifest_values(b: RecordingBundle) -> dict[str, object]:
+    """Manifest fields whose values are determined entirely by published tables."""
+    t0, t1 = _span(b)
+    row: dict[str, object] = {
+        "recording_id": b.ref.recording_id, "participant_id": b.ref.participant_id,
+        "cohort": b.ref.cohort, "pipeline": b.ref.pipeline,
+        "source_pipeline": b.ref.pipeline, "schema_version": S.SCHEMA_VERSION,
+        "t_start_ns": t0, "t_end_ns": t1, "duration_s": round((t1 - t0) / 1e9, 3),
+        "n_samples_watch": len(b.tables.get("watch", [])),
+        "n_samples_pen": len(b.tables.get("pen", [])),
+        "n_samples_head": len(b.tables.get("headimu", [])),
+        "watch_hz_measured": np.nan,
+        "head_hz_measured": np.nan,
+    }
+    for modality in S.MODALITIES:
+        row[f"has_{modality}"] = modality in b.tables
+    for flag, columns in S.CAPABILITY_FLAG_COLUMNS.items():
+        table = b.tables.get(S.CAPABILITY_FLAG_MODALITY[flag])
+        present = set(columns) & set(table.columns) if table is not None else set()
+        if present and len(present) != len(columns):
+            capability = flag.removeprefix("has_").replace("_", " ")
+            missing = sorted(set(columns) - present)
+            raise ValueError(
+                f"partial {capability} vector for capability '{flag}': missing {missing}"
+            )
+        row[flag] = len(present) == len(columns)
+    if (watch := b.tables.get("watch")) is not None:
+        row["watch_hz_measured"] = _rate(watch)
+    if (head := b.tables.get("headimu")) is not None:
+        row["head_hz_measured"] = _rate(head)
+    row["n_writing_tasks"], row["n_idle_tasks"] = _task_counts(b.tables.get("markers"))
+    dropouts = detect_dropouts(b.tables)
+    row["issue_codes"] = json.dumps([
+        {"code": "modality_dropout", "modality": modality, "n_samples": dropout.n_samples,
+         "coverage_ratio": dropout.coverage_ratio}
+        for modality, dropout in sorted(dropouts.items())
+    ]) if dropouts else ""
+    return row
+
+
 def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
     rows = []
     for b in bundles:
-        t0, t1 = _span(b)
         row: dict[str, object] = dict(_DEFAULTS)
-        row.update({
-            "recording_id": b.ref.recording_id, "participant_id": b.ref.participant_id,
-            "cohort": b.ref.cohort, "pipeline": b.ref.pipeline,
-            "source_pipeline": b.ref.pipeline, "schema_version": S.SCHEMA_VERSION,
-            "t_start_ns": t0, "t_end_ns": t1, "duration_s": round((t1 - t0) / 1e9, 3),
-            "n_samples_watch": len(b.tables.get("watch", [])),
-            "n_samples_pen": len(b.tables.get("pen", [])),
-            "n_samples_head": len(b.tables.get("headimu", [])),
-        })
-
-        # Structural flags: table/column presence, not meta - see module docstring.
-        for m in S.MODALITIES:
-            row[f"has_{m}"] = m in b.tables
-        # Capability sub-flags: same structural treatment, driven by
-        # S.CAPABILITY_FLAG_COLUMNS (which complete vector) paired with
-        # S.CAPABILITY_FLAG_MODALITY (which table) - not five literal lines.
-        # A flag added to those shared tables later is derived correctly here
-        # with no matching edit in this module; before this loop existed, a
-        # flag missing its own literal line fell through to _DEFAULTS' False
-        # regardless of what the data actually said (see fix round 2's
-        # mutation in the task report).
-        for flag, columns in S.CAPABILITY_FLAG_COLUMNS.items():
-            table = b.tables.get(S.CAPABILITY_FLAG_MODALITY[flag])
-            present = set(columns) & set(table.columns) if table is not None else set()
-            if present and len(present) != len(columns):
-                capability = flag.removeprefix("has_").replace("_", " ")
-                missing = sorted(set(columns) - present)
-                raise ValueError(
-                    f"partial {capability} vector for capability '{flag}': "
-                    f"missing {missing}"
-                )
-            row[flag] = len(present) == len(columns)
-        watch = b.tables.get("watch")
-        if watch is not None:
-            row["watch_hz_measured"] = _rate(watch)
-        head = b.tables.get("headimu")
-        if head is not None:
-            row["head_hz_measured"] = _rate(head)
-        row["n_writing_tasks"], row["n_idle_tasks"] = _task_counts(b.tables.get("markers"))
+        row.update(table_derived_manifest_values(b))
 
         # Everything else the adapter declared, excluding the fields just
         # derived above (a redundant meta declaration - today always
@@ -287,18 +297,6 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
         row["time_domain"] = _primary_time_domain(by_modality)
         row["alignment_note"] = _alignment_note(row["time_alignment"], by_modality, row["time_domain"])
 
-        # Why (C4): derived from the tables, not restated - a modality below
-        # the coverage floor is published with the fact attached (sample
-        # count + ratio) rather than silently dropped or silently kept under
-        # the same word as a complete stream. Empty string, not "[]", when
-        # there is nothing to report - matches issue_codes' pre-existing
-        # default (_DEFAULTS above) and every other manifest string default.
-        dropouts = detect_dropouts(b.tables)
-        row["issue_codes"] = json.dumps([
-            {"code": "modality_dropout", "modality": m, "n_samples": d.n_samples,
-             "coverage_ratio": d.coverage_ratio}
-            for m, d in sorted(dropouts.items())
-        ]) if dropouts else ""
         rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -322,6 +320,10 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
 
 
 _TIME_COLUMNS = {S.TIME_COLUMN, "t_start_ns", "t_end_ns"}
+CHANNEL_COLUMNS = (
+    "recording_id", "modality", "column", "quantity", "unit", "semantics", "frame",
+    "sample_rate_hz", "unit_conversion_factor", "time_domain",
+)
 
 # Non-physical signal columns whose actual scale is a genuinely different unit
 # per recording (Moleskine's ncode grid vs. the ETH web app's own pixel/force
@@ -407,8 +409,22 @@ def _describe_column(column: str, quantity: S.Quantity | None,
     return unit, semantics, ""
 
 
+def table_column_descriptor_values(df: pd.DataFrame, column: str,
+                                   meta: dict[str, object]) -> dict[str, object]:
+    """Descriptor fields determined by a stored table and published manifest metadata."""
+    col_to_quantity = {name: quantity for quantity, names in S.COLUMNS.items() for name in names}
+    quantity = col_to_quantity.get(column)
+    unit, semantics, frame = _describe_column(column, quantity, meta)
+    return {
+        "quantity": quantity.value if quantity else ("time" if column in _TIME_COLUMNS else "other"),
+        "unit": unit,
+        "semantics": semantics,
+        "frame": frame,
+        "sample_rate_hz": _rate(df),
+    }
+
+
 def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
-    col_to_quantity = {c: q for q, cols in S.COLUMNS.items() for c in cols}
     rows = []
     for b in bundles:
         by_modality = b.meta.get("time_domain_by_modality", {})
@@ -425,7 +441,6 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
         column_domains = b.meta.get("time_domain_by_column", {})
         factors = b.meta.get("unit_conversion_factor_by_column", {})
         for modality, df in b.tables.items():
-            hz = _rate(df)
             # Why (C2): time_domain is per-modality, not restated once for the
             # whole recording - a missing OR blank entry is an adapter bug (an
             # emitted table with no declared clock), not a case to paper over
@@ -439,8 +454,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
                 )
             modality_domain = by_modality[modality]
             for column in df.columns:
-                q = col_to_quantity.get(column)
-                unit, semantics, frame = _describe_column(column, q, b.meta)
+                descriptor = table_column_descriptor_values(df, column, b.meta)
                 # Why (C1): the factor actually applied, per (modality, column) -
                 # not restated as a fixed 1.0 beside an adapter that may have
                 # divided by G_TO_MS2. Absent from the map means the adapter
@@ -449,15 +463,10 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
                 domain = column_domains.get((modality, column), modality_domain)
                 rows.append({
                     "recording_id": b.ref.recording_id, "modality": modality, "column": column,
-                    "quantity": q.value if q else ("time" if column in _TIME_COLUMNS else "other"),
-                    "unit": unit, "semantics": semantics, "frame": frame,
-                    "sample_rate_hz": hz, "unit_conversion_factor": factor,
+                    **descriptor, "unit_conversion_factor": factor,
                     "time_domain": domain,
                 })
-    return pd.DataFrame(rows, columns=[
-        "recording_id", "modality", "column", "quantity", "unit", "semantics", "frame",
-        "sample_rate_hz", "unit_conversion_factor", "time_domain",
-    ])
+    return pd.DataFrame(rows, columns=CHANNEL_COLUMNS)
 
 
 def check_manifest_consistency(manifest: pd.DataFrame, root: Path) -> list[str]:

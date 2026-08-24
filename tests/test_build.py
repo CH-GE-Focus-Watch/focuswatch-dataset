@@ -251,6 +251,88 @@ def test_cli_validate_rechecks_the_stored_table_physics(tmp_path):
     assert main(["validate", "--dataset", str(out)]) == 1
 
 
+def test_cli_validate_requires_the_complete_published_manifest_contract(tmp_path):
+    """An omitted published manifest fact cannot be treated as adapter-only metadata."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    load_manifest(out).drop(columns=["issue_codes"]).to_parquet(
+        out / "sessions.parquet", index=False
+    )
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_recomputes_table_derived_manifest_values(tmp_path):
+    """Stored tables, not mutable summaries, define the derived manifest facts."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    watch_row = manifest.index[manifest["has_watch"]][0]
+    task_row = manifest.index[manifest["n_writing_tasks"].notna()][0]
+    mutations = (
+        (watch_row, "has_quaternion", False),
+        (watch_row, "watch_hz_measured", manifest.loc[watch_row, "watch_hz_measured"] + 1),
+        (watch_row, "n_samples_watch", manifest.loc[watch_row, "n_samples_watch"] + 1),
+        (watch_row, "t_start_ns", manifest.loc[watch_row, "t_start_ns"] + 1),
+        (watch_row, "duration_s", manifest.loc[watch_row, "duration_s"] + 1),
+        (task_row, "n_writing_tasks", manifest.loc[task_row, "n_writing_tasks"] + 1),
+        (watch_row, "issue_codes", "tampered"),
+    )
+    for row, column, value in mutations:
+        tampered = manifest.copy()
+        tampered.loc[row, column] = value
+        tampered.to_parquet(out / "sessions.parquet", index=False)
+
+        assert main(["validate", "--dataset", str(out)]) == 1, column
+
+
+def test_cli_validate_rejects_orphan_modality_tables(tmp_path):
+    """Every archived modality file must have exactly one declared manifest key."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    source = next((out / "watch").glob("*.parquet"))
+    (out / "watch" / "ORPHAN.parquet").write_bytes(source.read_bytes())
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_channels_for_unknown_or_undeclared_tables(tmp_path):
+    """Channel descriptors cannot introduce an archive table key on their own."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    channels = pd.read_parquet(out / "channels.parquet")
+    template = channels.iloc[0].copy()
+    mutations = (
+        ("recording_id", "UNKNOWN-ID"),
+        ("modality", "watch_rawaccel"),
+    )
+    for column, value in mutations:
+        tampered = channels.copy()
+        row = template.copy()
+        row[column] = value
+        tampered.loc[len(tampered)] = row
+        tampered.to_parquet(out / "channels.parquet", index=False)
+
+        assert main(["validate", "--dataset", str(out)]) == 1, f"{column}={value}"
+
+
+def test_cli_validate_requires_and_rechecks_channel_descriptors(tmp_path):
+    """Published descriptor values are validated wherever archive data determines them."""
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+    build_dataset(src, out)
+    channels = pd.read_parquet(out / "channels.parquet")
+    channels.drop(columns=["time_domain"]).to_parquet(out / "channels.parquet", index=False)
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+    build_dataset(src, out)
+    channels = pd.read_parquet(out / "channels.parquet")
+    row = channels.index[channels["column"] == "t_ns"][0]
+    channels.loc[row, "quantity"] = "tampered"
+    channels.to_parquet(out / "channels.parquet", index=False)
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
 # --- Coverage-gate: check_coverage must actually gate the build -----------
 
 def test_missing_required_check_aborts_the_build(tmp_path, monkeypatch):
@@ -262,9 +344,9 @@ def test_missing_required_check_aborts_the_build(tmp_path, monkeypatch):
     touching any other check - report.failed stays empty, so only
     check_coverage's own gap-detection can be responsible for the abort.
     """
-    import focuswatch_dataset.build as build_mod
+    import focuswatch_dataset.validate as validate_mod
 
-    original = build_mod.validate_motion_table
+    original = validate_mod.validate_motion_table
 
     def dropped(df, recording_id, modality, nominal_hz):
         findings = original(df, recording_id, modality, nominal_hz)
@@ -272,7 +354,7 @@ def test_missing_required_check_aborts_the_build(tmp_path, monkeypatch):
             findings = [f for f in findings if f.check != "gyro_range"]
         return findings
 
-    monkeypatch.setattr(build_mod, "validate_motion_table", dropped)
+    monkeypatch.setattr(validate_mod, "validate_motion_table", dropped)
     with pytest.raises(RuntimeError, match="coverage gap"):
         build_dataset(sources(tmp_path), tmp_path / "out", strict=True)
 
@@ -283,9 +365,9 @@ def test_coverage_gap_abort_persists_the_full_gap_list_in_the_report(tmp_path, m
     `passed: true`) - the actual reason for the abort lived solely in the
     RuntimeError message, truncated to five gaps and never written to disk.
     """
-    import focuswatch_dataset.build as build_mod
+    import focuswatch_dataset.validate as validate_mod
 
-    original = build_mod.validate_motion_table
+    original = validate_mod.validate_motion_table
 
     def dropped(df, recording_id, modality, nominal_hz):
         findings = original(df, recording_id, modality, nominal_hz)
@@ -293,7 +375,7 @@ def test_coverage_gap_abort_persists_the_full_gap_list_in_the_report(tmp_path, m
             findings = [f for f in findings if f.check != "gyro_range"]
         return findings
 
-    monkeypatch.setattr(build_mod, "validate_motion_table", dropped)
+    monkeypatch.setattr(validate_mod, "validate_motion_table", dropped)
     out = tmp_path / "out"
     with pytest.raises(RuntimeError, match="coverage gap"):
         build_dataset(sources(tmp_path), out, strict=True)
@@ -489,9 +571,9 @@ def test_permissive_build_returns_the_same_report_it_persists(tmp_path, monkeypa
     which did not - cli.py's summary/exit code read the returned report,
     not the file, so the two disagreed about whether anything failed.
     """
-    import focuswatch_dataset.build as build_mod
+    import focuswatch_dataset.validate as validate_mod
 
-    original = build_mod.validate_motion_table
+    original = validate_mod.validate_motion_table
 
     def dropped(df, recording_id, modality, nominal_hz):
         findings = original(df, recording_id, modality, nominal_hz)
@@ -499,7 +581,7 @@ def test_permissive_build_returns_the_same_report_it_persists(tmp_path, monkeypa
             findings = [f for f in findings if f.check != "gyro_range"]
         return findings
 
-    monkeypatch.setattr(build_mod, "validate_motion_table", dropped)
+    monkeypatch.setattr(validate_mod, "validate_motion_table", dropped)
     out = tmp_path / "out"
     report = build_dataset(sources(tmp_path), out, strict=False)
 

@@ -464,13 +464,29 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
     return problems
 
 
+def validate_bundle(bundle: RecordingBundle) -> list[Finding]:
+    """Run every validation check applicable to a bundle's tables and metadata."""
+    findings: list[Finding] = []
+    for modality in S.MOTION_MODALITIES:
+        if modality in bundle.tables:
+            nominal_key = "head_hz_nominal" if modality == "headimu" else "watch_hz_nominal"
+            findings += validate_motion_table(
+                bundle.tables[modality], bundle.ref.recording_id, modality,
+                bundle.meta.get(nominal_key),
+            )
+    if "pen" in bundle.tables:
+        findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
+    if "attention" in bundle.tables:
+        findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
+    return findings + validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
+
+
 def _archive_meta(row: pd.Series) -> dict[str, object]:
     """Return only recording metadata that the archive itself publishes."""
     return row.to_dict()
 
 
-def _archive_bundle(manifest_row: pd.Series, channels: pd.DataFrame,
-                    root: Path) -> RecordingBundle:
+def _archive_bundle(manifest_row: pd.Series, root: Path) -> RecordingBundle:
     recording_id = str(manifest_row["recording_id"])
     declared_schema = str(manifest_row["schema_version"])
     if declared_schema != S.SCHEMA_VERSION:
@@ -498,23 +514,6 @@ def _archive_bundle(manifest_row: pd.Series, channels: pd.DataFrame,
                     f"{path}: embedded {key} is {observed!r}, expected {expected!r}"
                 )
 
-        described = channels.loc[
-            (channels["recording_id"] == recording_id) & (channels["modality"] == modality)
-        ]
-        duplicate_columns = described.loc[described["column"].duplicated(), "column"].tolist()
-        if duplicate_columns:
-            raise ValueError(
-                f"channels.parquet: duplicate descriptors for {recording_id}/{modality}: "
-                f"{sorted(duplicate_columns)}"
-            )
-        declared_columns = set(described["column"])
-        stored_columns = set(table.columns)
-        if declared_columns != stored_columns:
-            raise ValueError(
-                f"channels.parquet: descriptors for {recording_id}/{modality} do not match "
-                f"the stored table (missing={sorted(stored_columns - declared_columns)}, "
-                f"unexpected={sorted(declared_columns - stored_columns)})"
-            )
         tables[modality] = table
 
     return RecordingBundle(
@@ -530,21 +529,94 @@ def _archive_bundle(manifest_row: pd.Series, channels: pd.DataFrame,
     )
 
 
-def _validate_archive_bundle(bundle: RecordingBundle) -> list[Finding]:
-    """Rerun checks that can be derived from published tables and manifest rows."""
-    findings: list[Finding] = []
-    for modality in S.MOTION_MODALITIES:
-        if modality in bundle.tables:
-            nominal_key = "head_hz_nominal" if modality == "headimu" else "watch_hz_nominal"
-            findings += validate_motion_table(
-                bundle.tables[modality], bundle.ref.recording_id, modality,
-                bundle.meta.get(nominal_key),
+def _same_archive_value(observed: object, expected: object) -> bool:
+    if pd.isna(observed) and pd.isna(expected):
+        return True
+    if isinstance(observed, (float, np.floating)) or isinstance(expected, (float, np.floating)):
+        return bool(np.isclose(observed, expected, equal_nan=True))
+    return bool(observed == expected)
+
+
+def _declared_table_keys(manifest: pd.DataFrame) -> set[tuple[str, str]]:
+    return {
+        (str(row["recording_id"]), modality)
+        for _, row in manifest.iterrows()
+        for modality in S.MODALITIES
+        if bool(row[f"has_{modality}"])
+    }
+
+
+def _validate_archive_inventory(root: Path, manifest: pd.DataFrame,
+                                channels: pd.DataFrame) -> None:
+    declared = _declared_table_keys(manifest)
+    stored: set[tuple[str, str]] = set()
+    for modality in S.MODALITIES:
+        directory = root / modality
+        if directory.exists() and not directory.is_dir():
+            raise ValueError(f"{directory}: modality path is not a directory")
+        if directory.is_dir():
+            stored.update((path.stem, modality) for path in directory.glob("*.parquet"))
+    orphans = sorted(stored - declared)
+    if orphans:
+        raise ValueError(f"orphan modality Parquet files: {orphans}")
+
+    channel_keys = set(zip(channels["recording_id"].astype(str), channels["modality"].astype(str)))
+    undeclared = sorted(channel_keys - declared)
+    if undeclared:
+        raise ValueError(f"channels.parquet rows for unknown or undeclared tables: {undeclared}")
+
+
+def _validate_archive_descriptors(bundle: RecordingBundle, channels: pd.DataFrame,
+                                  descriptor_values) -> None:
+    recording_id = bundle.ref.recording_id
+    primary = "watch" if "watch" in bundle.tables else ("headimu" if "headimu" in bundle.tables else None)
+    for modality, table in bundle.tables.items():
+        described = channels.loc[
+            (channels["recording_id"] == recording_id) & (channels["modality"] == modality)
+        ]
+        duplicate_columns = described.loc[described["column"].duplicated(), "column"].tolist()
+        if duplicate_columns:
+            raise ValueError(
+                f"channels.parquet: duplicate descriptors for {recording_id}/{modality}: "
+                f"{sorted(duplicate_columns)}"
             )
-    if "pen" in bundle.tables:
-        findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
-    if "attention" in bundle.tables:
-        findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
-    return findings + validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
+        by_column = described.set_index("column")
+        declared_columns = set(by_column.index)
+        stored_columns = set(table.columns)
+        if declared_columns != stored_columns:
+            raise ValueError(
+                f"channels.parquet: descriptors for {recording_id}/{modality} do not match "
+                f"the stored table (missing={sorted(stored_columns - declared_columns)}, "
+                f"unexpected={sorted(declared_columns - stored_columns)})"
+            )
+        for column in table.columns:
+            descriptor = by_column.loc[column]
+            expected = descriptor_values(table, column, bundle.meta)
+            for field, expected_value in expected.items():
+                if not _same_archive_value(descriptor[field], expected_value):
+                    raise ValueError(
+                        f"channels.parquet: {recording_id}/{modality}/{column} {field} is "
+                        f"{descriptor[field]!r}, expected {expected_value!r}"
+                    )
+            factor = descriptor["unit_conversion_factor"]
+            if not isinstance(factor, (int, float, np.number)) or not np.isfinite(factor):
+                raise ValueError(
+                    f"channels.parquet: {recording_id}/{modality}/{column} has invalid "
+                    f"unit_conversion_factor {factor!r}"
+                )
+            domain = descriptor["time_domain"]
+            if not isinstance(domain, str) or not domain:
+                raise ValueError(
+                    f"channels.parquet: {recording_id}/{modality}/{column} has no time_domain"
+                )
+        if modality == primary and S.TIME_COLUMN in by_column.index:
+            observed_domain = by_column.loc[S.TIME_COLUMN, "time_domain"]
+            expected_domain = bundle.meta["time_domain"]
+            if not _same_archive_value(observed_domain, expected_domain):
+                raise ValueError(
+                    f"channels.parquet: {recording_id}/{modality}/{S.TIME_COLUMN} time_domain is "
+                    f"{observed_domain!r}, expected manifest value {expected_domain!r}"
+                )
 
 
 def validate_dataset(root: Path | str) -> ValidationReport:
@@ -562,19 +634,21 @@ def validate_dataset(root: Path | str) -> ValidationReport:
     except Exception as exc:
         raise ValueError(f"could not read archive manifest or channels at {root}: {exc}") from exc
 
-    required_channel_columns = {"recording_id", "modality", "column"}
-    missing_channel_columns = required_channel_columns - set(channels.columns)
-    if missing_channel_columns:
-        raise ValueError(
-            f"channels.parquet: missing required columns {sorted(missing_channel_columns)}"
-        )
-    required_manifest_columns = {"recording_id", "participant_id", "cohort", "pipeline",
-                                 "schema_version", *S.MODALITY_FLAGS}
-    missing_manifest_columns = required_manifest_columns - set(manifest.columns)
-    if missing_manifest_columns:
-        raise ValueError(
-            f"sessions.parquet: missing required columns {sorted(missing_manifest_columns)}"
-        )
+    # Imported lazily because manifest imports this module's dropout helper.
+    from .manifest import (
+        CHANNEL_COLUMNS, MANIFEST_COLUMNS, TABLE_DERIVED_MANIFEST_COLUMNS,
+        check_manifest_consistency, table_column_descriptor_values,
+        table_derived_manifest_values,
+    )
+
+    for name, frame, expected_columns in (
+        ("sessions.parquet", manifest, MANIFEST_COLUMNS),
+        ("channels.parquet", channels, CHANNEL_COLUMNS),
+    ):
+        missing = sorted(set(expected_columns) - set(frame.columns))
+        unexpected = sorted(set(frame.columns) - set(expected_columns))
+        if missing or unexpected:
+            raise ValueError(f"{name}: contract columns mismatch (missing={missing}, unexpected={unexpected})")
     duplicate_ids = sorted(
         str(recording_id) for recording_id in manifest.loc[
             manifest["recording_id"].duplicated(keep=False), "recording_id"
@@ -583,9 +657,6 @@ def validate_dataset(root: Path | str) -> ValidationReport:
     if duplicate_ids:
         raise ValueError(f"sessions.parquet: duplicate recording_id values: {', '.join(duplicate_ids)}")
 
-    # Imported lazily because manifest imports this module's dropout helper.
-    from .manifest import check_manifest_consistency
-
     report = ValidationReport()
     for problem in check_manifest_consistency(manifest, root):
         report.findings.append(Finding(
@@ -593,10 +664,20 @@ def validate_dataset(root: Path | str) -> ValidationReport:
             "has_<modality> flag matches file presence", False,
         ))
 
-    bundles = [_archive_bundle(row, channels, root) for _, row in manifest.iterrows()]
+    _validate_archive_inventory(root, manifest, channels)
+    bundles = [_archive_bundle(row, root) for _, row in manifest.iterrows()]
     dropouts: dict[str, dict[str, Dropout]] = {}
     for bundle in bundles:
-        report.findings += _validate_archive_bundle(bundle)
+        expected_manifest = table_derived_manifest_values(bundle)
+        for column in TABLE_DERIVED_MANIFEST_COLUMNS:
+            observed = bundle.meta[column]
+            if not _same_archive_value(observed, expected_manifest[column]):
+                raise ValueError(
+                    f"sessions.parquet: {bundle.ref.recording_id} {column} is {observed!r}, "
+                    f"expected {expected_manifest[column]!r} from stored tables"
+                )
+        _validate_archive_descriptors(bundle, channels, table_column_descriptor_values)
+        report.findings += validate_bundle(bundle)
         dropouts[bundle.ref.recording_id] = detect_dropouts(bundle.tables)
 
     for problem in check_coverage(manifest, report.findings, dropouts):

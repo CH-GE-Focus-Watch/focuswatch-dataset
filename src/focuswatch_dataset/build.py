@@ -52,8 +52,7 @@ from .adapters.base import RecordingBundle
 from .manifest import build_channels, build_manifest, check_manifest_consistency
 from .redact import RedactionPolicy, redact_bundle
 from .validate import (
-    Finding, ValidationReport, check_coverage, detect_dropouts, validate_attention_table,
-    validate_motion_table, validate_pen_table, validate_recording,
+    Finding, ValidationReport, check_coverage, detect_dropouts, validate_bundle,
 )
 from .write import write_table
 
@@ -89,22 +88,6 @@ def _git_sha() -> str:
             return importlib.metadata.version("focuswatch-dataset")
         except importlib.metadata.PackageNotFoundError:
             return ""
-
-
-def _validate(bundle: RecordingBundle) -> list:
-    findings = []
-    for modality in S.MOTION_MODALITIES:
-        if modality in bundle.tables:
-            nominal = bundle.meta.get("head_hz_nominal" if modality == "headimu"
-                                      else "watch_hz_nominal")
-            findings += validate_motion_table(bundle.tables[modality],
-                                              bundle.ref.recording_id, modality, nominal)
-    if "pen" in bundle.tables:
-        findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
-    if "attention" in bundle.tables:
-        findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
-    findings += validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
-    return findings
 
 
 def _load_bundle(name: str, root: Path) -> list[RecordingBundle]:
@@ -295,7 +278,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         # redaction_policy meta can never disagree with what was
         # actually done to the pen table (see redact.py's docstring).
         bundle = redact_bundle(bundle, policy)
-        report.findings += _validate(bundle)
+        report.findings += validate_bundle(bundle)
         bundles.append(bundle)
 
     manifest_preview = build_manifest(bundles)
