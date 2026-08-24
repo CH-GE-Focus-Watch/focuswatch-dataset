@@ -181,7 +181,7 @@ def validate_pen_table(df: pd.DataFrame, recording_id: str) -> list[Finding]:
 
 
 def validate_attention_table(df: pd.DataFrame, recording_id: str) -> list[Finding]:
-    """M8: the attention label vocabulary is now known and closed (schema.ATTENTION_LABELS)."""
+    """Validate the closed attention-label vocabulary."""
     unknown = sorted(set(df["label"]) - set(S.ATTENTION_LABELS))
     return [Finding("attention_label_vocabulary", recording_id, "attention", "label",
                     ", ".join(unknown) or "-", f"subset of {S.ATTENTION_LABELS}", not unknown)]
@@ -316,8 +316,8 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
     # invariant structural, not just declarative. Emitted whenever a motion
     # table exists, regardless of whether `semantics` resolves - an
     # unrecognised value (empty string, a typo, a future third value) must
-    # fail this finding rather than silently produce none at all (Finding 5,
-    # correction round 1): a skipped check and a passed check are otherwise
+    # fail this finding rather than silently produce none at all: a skipped
+    # check and a passed check are otherwise
     # indistinguishable, same principle as check_coverage below.
     semantics = meta.get("accel_semantics")
     quantity = S.ACCEL_SEMANTICS_QUANTITY.get(semantics)

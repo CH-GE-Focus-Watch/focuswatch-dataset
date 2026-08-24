@@ -81,8 +81,7 @@ class Ml4scsAdapter:
             # `local_ts_ms`), not the watch capture clock the rest of
             # `watch/` is on. src_phone_received_at is the iPhone bridge's
             # own clock - a third device, not the server. pen.src_timestamp
-            # is the raw Moleskine device's own clock (see _pen below),
-            # ~923 days off server_wall_clock on this corpus (finding 1).
+            # is the raw Moleskine device's own clock, far from server time.
             # src_t_session_ms is a session-relative offset, not a wall
             # clock reading, on both pen and markers. src_sequence needs NO
             # override: it holds no time, so under the field's rule it

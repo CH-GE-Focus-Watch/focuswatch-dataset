@@ -91,7 +91,7 @@ class SensorLoggerAdapter:
         session suffixes (`E1_session3`, `focuswatch_T10_s1_d7498f51`) that
         are not DESIGN §2.2's `ETH-T8` token form. Fails loudly rather than
         falling back to a directory-name guess: the two ETH participant
-        namespaces are disjoint (open question 3), which only holds if the
+        namespaces are disjoint, which only holds if the
         published token is the one the session itself states.
         """
         payload = cls._read_session_json(d)
@@ -299,8 +299,8 @@ class SensorLoggerAdapter:
                 # millisecond-magnitude, far inside float64's exact range.
                 "pressure": np.array([e["payload"].get("force", np.nan)
                                       for e in strokes], dtype=float),
-                # Generation A carries no tilt or pen-device
-                # clock (open question 4) - NaN here is honest, not a bug.
+                # Generation A carries no tilt or pen-device clock; NaN is
+                # therefore an honest value, not a bug.
                 "tilt_x": np.array([e["payload"].get("tilt", {}).get("x", np.nan)
                                     for e in strokes], dtype=float),
                 "tilt_y": np.array([e["payload"].get("tilt", {}).get("y", np.nan)

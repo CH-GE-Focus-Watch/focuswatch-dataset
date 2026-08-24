@@ -135,8 +135,8 @@ class AirPodsAdapter:
             # boot - see _load's comment on the column), never reset to a
             # wall-clock epoch. headimu's canonical t_ns axis (from
             # timestamp_iso) genuinely is on device_wall_clock; this
-            # provenance column is not, and declaring it so would be exactly
-            # finding 1's failure mode one recording earlier.
+            # provenance column is not, so declaring the table clock here
+            # would mislabel its values.
             "time_domain_by_column": {
                 ("headimu", "src_sensor_timestamp_s"): S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK,
             },

@@ -124,7 +124,7 @@ def _report_with_gaps(report: ValidationReport, gaps: list[str]) -> ValidationRe
 def _manifest_finding(problem: str) -> Finding:
     """Turn one check_manifest_consistency problem string into a failing Finding.
 
-    Why (M1): mirrors _gap_finding above - a manifest/file mismatch on the
+    Mirrors _gap_finding above: a manifest/file mismatch on the
     permissive (strict=False) path must be discoverable in
     validation_report.json, not just present as a string nobody reads once
     the build proceeds anyway. Best-effort parse of the
@@ -314,7 +314,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         if problems:
             if strict:
                 raise RuntimeError("manifest inconsistent: " + "; ".join(problems))
-            # Why (M1): on the permissive path these used to be computed and
+            # On the permissive path these used to be computed and
             # then discarded - neither raised, appended, nor printed. Same
             # principle as _report_with_gaps above: the report that gets
             # persisted and returned must not diverge from what

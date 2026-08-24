@@ -301,8 +301,8 @@ CHANNEL_COLUMNS = (
 # schema.PEN_XY_UNIT_GEN_A/B). DESIGN §6 is explicit that channels.parquet's
 # `unit` cell for these stays the closed-vocabulary "device_native" - the
 # per-recording scale label lives ONLY in the manifest
-# (pen_xy_unit/pen_pressure_scale), read from meta[meta_key] there. Item 2
-# The per-recording label must not leak into the `unit`
+# (pen_xy_unit/pen_pressure_scale), read from meta[meta_key] there. The
+# per-recording label must not leak into the `unit`
 # cell too (`meta.get(meta_key) or "device_native"`), which put six
 # undefined values (ncode_grid, moleskine_raw, webapp_raw, webapp_force,
 # sl_webapp_raw, sl_webapp_force) into channels.parquet's supposedly
