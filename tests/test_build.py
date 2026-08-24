@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 from focuswatch_dataset.build import build_dataset
@@ -11,7 +12,7 @@ from focuswatch_dataset.cli import main
 from focuswatch_dataset.load import load_manifest
 from focuswatch_dataset.manifest import check_manifest_consistency
 from focuswatch_dataset.redact import RedactionPolicy
-from focuswatch_dataset.write import read_table
+from focuswatch_dataset.write import read_table, write_table
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 
 from .test_adapter_airpods import write_fixture as write_airpods
@@ -191,6 +192,63 @@ def test_cli_build_and_validate(tmp_path):
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
     assert main(["validate", "--dataset", str(out)]) == 0
+
+
+def test_cli_validate_rejects_a_table_with_the_wrong_embedded_recording_id(tmp_path):
+    """The Parquet footer is part of the published archive contract."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    path = next((out / "watch").glob("*.parquet"))
+    write_table(read_table(path), path, "WRONG-ID")
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_a_present_but_corrupt_motion_table(tmp_path):
+    """A readable historical report cannot mask corrupt published data."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    path = next((out / "watch").glob("*.parquet"))
+    path.write_bytes(b"not parquet")
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_a_table_with_the_wrong_embedded_schema_version(tmp_path):
+    """Footer schema metadata must agree with the published manifest contract."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    path = next((out / "watch").glob("*.parquet"))
+    table = pq.read_table(path)
+    metadata = dict(table.schema.metadata or {})
+    metadata[b"schema_version"] = b"WRONG-VERSION"
+    pq.write_table(table.replace_schema_metadata(metadata), path)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rejects_duplicate_manifest_recording_ids(tmp_path):
+    """A duplicated ID makes every manifest-to-table mapping ambiguous."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    pd.concat([manifest, manifest.iloc[[0]]], ignore_index=True).to_parquet(
+        out / "sessions.parquet", index=False
+    )
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_cli_validate_rechecks_the_stored_table_physics(tmp_path):
+    """The archive table, rather than validation_report.json, is authoritative."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    path = next((out / "watch").glob("*.parquet"))
+    frame = read_table(path)
+    frame.loc[1, "t_ns"] = frame.loc[0, "t_ns"] - 1
+    write_table(frame, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
 
 
 # --- Coverage-gate: check_coverage must actually gate the build -----------
@@ -692,7 +750,7 @@ def test_cli_report_on_a_missing_bundle_prints_a_message_not_a_traceback(tmp_pat
     assert "report failed" in capsys.readouterr().out
 
 
-def test_cli_validate_on_a_corrupt_report_prints_a_message_not_a_traceback(tmp_path, capsys):
+def test_cli_validate_ignores_a_corrupt_historical_report(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
     args = ["build", "--out", str(out)]
@@ -703,8 +761,8 @@ def test_cli_validate_on_a_corrupt_report_prints_a_message_not_a_traceback(tmp_p
 
     (out / "validation_report.json").write_text("{not valid json")
     rc = main(["validate", "--dataset", str(out)])
-    assert rc == 1
-    assert "validate failed" in capsys.readouterr().out
+    assert rc == 0
+    assert "validate failed" not in capsys.readouterr().out
 
 
 def test_annotation_tables_publish_one_schema_across_cohorts(tmp_path):

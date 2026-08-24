@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from . import schema as S
+from .adapters.base import RecordingBundle, RecordingRef
 from .physics import angle_deg, gravity_from_quaternion, norm_stats, still_mask
 from .time_axis import median_rate_hz
+from .write import read_table, table_metadata
 
 
 @dataclass(frozen=True)
@@ -459,3 +462,146 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
                 require("attention", "attention_within_headimu_range",
                        "has_attention and has_headimu are true")
     return problems
+
+
+def _archive_meta(row: pd.Series) -> dict[str, object]:
+    """Return only recording metadata that the archive itself publishes."""
+    return row.to_dict()
+
+
+def _archive_bundle(manifest_row: pd.Series, channels: pd.DataFrame,
+                    root: Path) -> RecordingBundle:
+    recording_id = str(manifest_row["recording_id"])
+    declared_schema = str(manifest_row["schema_version"])
+    if declared_schema != S.SCHEMA_VERSION:
+        raise ValueError(
+            f"sessions.parquet: {recording_id} declares schema_version "
+            f"{declared_schema!r}, expected {S.SCHEMA_VERSION!r}"
+        )
+
+    tables: dict[str, pd.DataFrame] = {}
+    for modality in S.MODALITIES:
+        if not bool(manifest_row[f"has_{modality}"]):
+            continue
+        path = root / modality / f"{recording_id}.parquet"
+        try:
+            metadata = table_metadata(path)
+            table = read_table(path)
+        except Exception as exc:
+            raise ValueError(f"{path}: could not read declared Parquet table: {exc}") from exc
+
+        for key, expected in (("recording_id", recording_id),
+                              ("schema_version", declared_schema)):
+            observed = metadata.get(key)
+            if observed != expected:
+                raise ValueError(
+                    f"{path}: embedded {key} is {observed!r}, expected {expected!r}"
+                )
+
+        described = channels.loc[
+            (channels["recording_id"] == recording_id) & (channels["modality"] == modality)
+        ]
+        duplicate_columns = described.loc[described["column"].duplicated(), "column"].tolist()
+        if duplicate_columns:
+            raise ValueError(
+                f"channels.parquet: duplicate descriptors for {recording_id}/{modality}: "
+                f"{sorted(duplicate_columns)}"
+            )
+        declared_columns = set(described["column"])
+        stored_columns = set(table.columns)
+        if declared_columns != stored_columns:
+            raise ValueError(
+                f"channels.parquet: descriptors for {recording_id}/{modality} do not match "
+                f"the stored table (missing={sorted(stored_columns - declared_columns)}, "
+                f"unexpected={sorted(declared_columns - stored_columns)})"
+            )
+        tables[modality] = table
+
+    return RecordingBundle(
+        RecordingRef(
+            recording_id,
+            str(manifest_row["participant_id"]),
+            str(manifest_row["cohort"]),
+            str(manifest_row["pipeline"]),
+            root,
+        ),
+        tables,
+        _archive_meta(manifest_row),
+    )
+
+
+def _validate_archive_bundle(bundle: RecordingBundle) -> list[Finding]:
+    """Rerun checks that can be derived from published tables and manifest rows."""
+    findings: list[Finding] = []
+    for modality in S.MOTION_MODALITIES:
+        if modality in bundle.tables:
+            nominal_key = "head_hz_nominal" if modality == "headimu" else "watch_hz_nominal"
+            findings += validate_motion_table(
+                bundle.tables[modality], bundle.ref.recording_id, modality,
+                bundle.meta.get(nominal_key),
+            )
+    if "pen" in bundle.tables:
+        findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
+    if "attention" in bundle.tables:
+        findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
+    return findings + validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
+
+
+def validate_dataset(root: Path | str) -> ValidationReport:
+    """Revalidate a published archive from its manifest, channels, and Parquet tables.
+
+    This intentionally does not consume ``validation_report.json`` or recreate
+    adapter-only metadata: neither is an authoritative description of the
+    published archive. Checks that depend on unpublished adapter metadata are
+    naturally skipped by ``validate_recording`` because that metadata is absent.
+    """
+    root = Path(root)
+    try:
+        manifest = pd.read_parquet(root / "sessions.parquet")
+        channels = pd.read_parquet(root / "channels.parquet")
+    except Exception as exc:
+        raise ValueError(f"could not read archive manifest or channels at {root}: {exc}") from exc
+
+    required_channel_columns = {"recording_id", "modality", "column"}
+    missing_channel_columns = required_channel_columns - set(channels.columns)
+    if missing_channel_columns:
+        raise ValueError(
+            f"channels.parquet: missing required columns {sorted(missing_channel_columns)}"
+        )
+    required_manifest_columns = {"recording_id", "participant_id", "cohort", "pipeline",
+                                 "schema_version", *S.MODALITY_FLAGS}
+    missing_manifest_columns = required_manifest_columns - set(manifest.columns)
+    if missing_manifest_columns:
+        raise ValueError(
+            f"sessions.parquet: missing required columns {sorted(missing_manifest_columns)}"
+        )
+    duplicate_ids = sorted(
+        str(recording_id) for recording_id in manifest.loc[
+            manifest["recording_id"].duplicated(keep=False), "recording_id"
+        ].unique()
+    )
+    if duplicate_ids:
+        raise ValueError(f"sessions.parquet: duplicate recording_id values: {', '.join(duplicate_ids)}")
+
+    # Imported lazily because manifest imports this module's dropout helper.
+    from .manifest import check_manifest_consistency
+
+    report = ValidationReport()
+    for problem in check_manifest_consistency(manifest, root):
+        report.findings.append(Finding(
+            "manifest_consistency", "-", "-", "-", problem,
+            "has_<modality> flag matches file presence", False,
+        ))
+
+    bundles = [_archive_bundle(row, channels, root) for _, row in manifest.iterrows()]
+    dropouts: dict[str, dict[str, Dropout]] = {}
+    for bundle in bundles:
+        report.findings += _validate_archive_bundle(bundle)
+        dropouts[bundle.ref.recording_id] = detect_dropouts(bundle.tables)
+
+    for problem in check_coverage(manifest, report.findings, dropouts):
+        report.findings.append(Finding(
+            "coverage_gap", "-", "-", "-", problem,
+            "check ran and produced a finding", False,
+        ))
+    return report
