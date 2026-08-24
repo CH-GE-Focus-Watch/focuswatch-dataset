@@ -40,6 +40,13 @@ class RedactionPolicy(StrEnum):
     ALL_XY = "all_xy"
 
 
+def _coerce_policy(policy: RedactionPolicy | str) -> RedactionPolicy:
+    try:
+        return RedactionPolicy(policy)
+    except ValueError as exc:
+        raise ValueError(f"unknown redaction policy {policy!r}") from exc
+
+
 def _free_writing_spans(markers: pd.DataFrame) -> list[tuple[int, int]]:
     spans = []
     for task_index, block in markers[markers["task_id"].isin(FREE_WRITING_TASKS)].groupby("task_index"):
@@ -51,7 +58,8 @@ def _free_writing_spans(markers: pd.DataFrame) -> list[tuple[int, int]]:
 
 
 def apply_redaction(pen: pd.DataFrame, markers: pd.DataFrame | None,
-                    policy: RedactionPolicy) -> pd.DataFrame:
+                    policy: RedactionPolicy | str) -> pd.DataFrame:
+    policy = _coerce_policy(policy)
     # Why: == not is - a caller wired from a CLI flag or config value passes a
     # plain str, and StrEnum equality (unlike identity) still matches it. An
     # `is` check that silently misses would fall through to the next branch
@@ -84,16 +92,17 @@ def _has_task_structure(markers: pd.DataFrame | None) -> bool:
 
 
 def redact_bundle(bundle: RecordingBundle,
-                  policy: RedactionPolicy = RedactionPolicy.NONE) -> RecordingBundle:
+                  policy: RedactionPolicy | str = RedactionPolicy.NONE) -> RecordingBundle:
     """Apply `policy` to a bundle's pen table and record the choice in meta.
 
     Default parameter is NONE, not merely a documented convention - a caller
     that builds a bundle without deciding on a policy publishes unredacted
     data and an honest "none" in the manifest, never a silent redaction.
     """
+    policy = _coerce_policy(policy)
     tables = dict(bundle.tables)
     if "pen" in tables:
         tables["pen"] = apply_redaction(tables["pen"], tables.get("markers"), policy)
     meta = dict(bundle.meta)
-    meta["redaction_policy"] = str(policy)
+    meta["redaction_policy"] = policy.value
     return RecordingBundle(bundle.ref, tables, meta)

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 from focuswatch_dataset.manifest import build_manifest
@@ -124,6 +125,16 @@ def test_redact_bundle_accepts_the_raw_string_form_of_a_policy():
     out = redact_bundle(_bundle(), "all_xy")
     assert out.tables["pen"][["x", "y"]].isna().all().all()
     assert out.meta["redaction_policy"] == "all_xy"
+
+
+def test_redact_bundle_rejects_an_unknown_policy_before_publishing_metadata():
+    with pytest.raises(ValueError, match="unknown redaction policy"):
+        redact_bundle(_bundle(), "all_x")
+
+
+def test_apply_redaction_rejects_an_unknown_policy():
+    with pytest.raises(ValueError, match="unknown redaction policy"):
+        apply_redaction(pen(), markers(), "typo")
 
 
 def test_redact_bundle_without_a_pen_table_still_records_the_policy():
