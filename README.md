@@ -90,7 +90,7 @@ semantics. Use the manifest and `channels.parquet` to make a deliberate choice.
 ## Explore the manifest in the terminal
 
 The optional terminal UI filters only manifest metadata; it does not load or
-export sensor samples. Plain-language facets (devices, signals, acquisition
+export sensor samples. Plain-language facets (modalities, signals, acquisition
 settings) update the recording count live, show the equivalent pandas query,
 and can export the selected manifest rows together with that query.
 

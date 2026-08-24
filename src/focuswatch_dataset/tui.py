@@ -78,9 +78,9 @@ class DatasetExplorerApp(App[None]):
     TITLE = "FocusWatch Dataset Explorer"
     SUB_TITLE = "Metadata selection over sessions.parquet"
     BINDINGS = [
-        ("e", "export", "Export selection"),
+        ("e", "export", "Export"),
         ("c", "copy_query", "Copy query"),
-        ("r", "reset", "Reset filters"),
+        ("r", "reset", "Reset"),
         ("p", "provenance", "Provenance"),
         ("q", "quit", "Quit"),
     ]
@@ -126,7 +126,7 @@ class DatasetExplorerApp(App[None]):
 
     def on_mount(self) -> None:
         self.query_one("#preview", DataTable).add_columns(
-            "Recording ID", "Participant", "Duration", "Available devices"
+            "Recording ID", "Participant", "Duration", "Modalities"
         )
         self._refresh_selection()
 

@@ -109,7 +109,7 @@ def test_explorer_selection_normalizes_mutable_input_to_frozenset():
 def test_facets_have_understandable_german_labels_and_manifest_conditions():
     labels = {facet.label for facet in FACETS.values()}
 
-    assert {"Smartwatch", "Head IMU / earbuds", "Digital pen", "Observer annotation"} <= labels
+    assert {"Smartwatch", "Head IMU", "Smart Pen", "Observer annotation"} <= labels
     assert "Watch gravity" in labels
     assert FACETS["watch_50_hz"].condition == ("watch_hz_nominal", 50.0)
     assert FACETS["acceleration_user"].condition == ("accel_semantics", "user")

@@ -20,11 +20,11 @@ class Facet:
 
 # Registry order is the canonical order for both the UI and generated queries.
 FACETS: dict[str, Facet] = {
-    "smartwatch": Facet("Smartwatch", "Devices", ("has_watch", True)),
-    "head_imu": Facet("Head IMU / earbuds", "Devices", ("has_headimu", True)),
-    "digital_pen": Facet("Digital pen", "Devices", ("has_pen", True)),
+    "smartwatch": Facet("Smartwatch", "Modalities", ("has_watch", True)),
+    "head_imu": Facet("Head IMU", "Modalities", ("has_headimu", True)),
+    "digital_pen": Facet("Smart Pen", "Modalities", ("has_pen", True)),
     "observer_annotation": Facet(
-        "Observer annotation", "Devices", ("has_attention", True)
+        "Observer annotation", "Modalities", ("has_attention", True)
     ),
     "watch_gravity": Facet("Watch gravity", "Signals", ("has_gravity", True)),
     "watch_quaternion": Facet(
