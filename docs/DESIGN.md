@@ -385,6 +385,22 @@ m.query("protocol_id == 'ml4scs_v2'")
 df = load_recording(root, "ML4SCS-S096", modality="watch")
 ```
 
+Für eine reproduzierbare Auswahl mit anschließendem, ausdrücklich ausgelöstem
+Laden mehrerer Tabellen gibt es `examples/select_and_load.py`:
+
+```bash
+python examples/select_and_load.py focuswatch-dataset-v1.0 \
+  --require-pen --modality watch --limit 10
+```
+
+Das Beispiel liest zuerst ausschließlich `sessions.parquet` und filtert die
+Manifest-Zeilen. Erst die daraus gewonnenen `recording_id`-Werte werden an
+`load_recordings` übergeben; eine Auswahl lädt keine Sensordaten implizit.
+Alternativ kann `fw explore DATASET_ROOT --export selection.json` dieselbe
+Metadaten-Auswahl interaktiv exportieren. Auch der Explorer liest zunächst nur
+das Manifest; Sensortabellen werden erst durch einen nachgelagerten Python-Aufruf
+geladen.
+
 `load_recording` takes `root` explicitly rather than remembering it from a
 prior `load_manifest` call. The alternative - a stateful "dataset" object
 returned by `load_manifest` that closes over its root - was rejected: every
@@ -396,6 +412,13 @@ form is what every test in this package's own suite already exercises with a
 
 `load_recordings(subset)` prüft beim Laden mehrerer Recordings auf
 Semantik-Homogenität und wirft, wenn `user`- und `total`-Accel gemischt würden.
+
+Die lokale Release-Prüfung umfasst die vollständige Testsuite, Bytecode-
+Kompilierung und den Guard gegen versehentlich versionierte Teilnehmerdaten.
+Der strikte externe Daten-Gate (`fw build` mit dem Quellbundle und danach
+`fw validate`) bleibt auf der Maschine auszuführen, auf der das private
+Quellbundle vorhanden ist; seine erfolgreiche Ausführung wird hier nicht
+behauptet.
 
 ## 8. Adapter-Spezifikation
 
