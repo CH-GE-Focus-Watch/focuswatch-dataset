@@ -13,5 +13,9 @@ alldata/
 # Local agent process notes are not part of the public project documentation.
 docs/superpowers/
 
+# Local metadata selections and exported subsets are never release artefacts.
+focuswatch-selection.json
+focuswatch-selection-*/
+
 # IDE state - never part of a published code artefact
 .idea/

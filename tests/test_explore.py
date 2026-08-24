@@ -9,6 +9,7 @@ from focuswatch_dataset import cli
 from focuswatch_dataset.explore import (
     FACETS,
     ExplorerSelection,
+    export_selected_recordings,
     export_selection,
     filter_manifest,
     selection_query,
@@ -135,8 +136,9 @@ def test_export_selection_json_contains_only_manifest_rows_and_query(tmp_path, m
     )
 
     payload = json.loads(destination.read_text(encoding="utf-8"))
-    assert set(payload) == {"query", "rows"}
+    assert set(payload) == {"query", "recording_ids", "rows"}
     assert payload["query"] == "has_watch and has_gravity"
+    assert payload["recording_ids"] == ["A"]
     assert [row["recording_id"] for row in payload["rows"]] == ["A"]
     assert "samples" not in json.dumps(payload).lower()
 
@@ -154,6 +156,128 @@ def test_export_selection_csv_writes_rows_and_reproducible_query(tmp_path, manif
 def test_export_selection_rejects_non_metadata_format(tmp_path, manifest):
     with pytest.raises(ValueError, match=r"\.csv or \.json"):
         export_selection(manifest, {}, tmp_path / "selection.parquet")
+
+
+def test_export_selected_recordings_creates_a_portable_subset(tmp_path, manifest):
+    root = tmp_path / "bundle"
+    root.mkdir()
+    source_manifest = manifest.assign(
+        has_watch_rawaccel=False,
+        has_markers=[True, False],
+        has_pen=[True, False],
+    )
+    source_manifest.to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame([
+        {"recording_id": "A", "modality": "watch", "column": "accel_user_x"},
+        {"recording_id": "A", "modality": "pen", "column": "x"},
+        {"recording_id": "A", "modality": "markers", "column": "event"},
+        {"recording_id": "B", "modality": "watch", "column": "accel_total_x"},
+        {"recording_id": "B", "modality": "headimu", "column": "accel_x"},
+    ]).to_parquet(root / "channels.parquet", index=False)
+    for modality, recording_id, content in (
+        ("watch", "A", b"watch-a"),
+        ("pen", "A", b"pen-a"),
+        ("markers", "A", b"markers-a"),
+        ("watch", "B", b"watch-b"),
+        ("headimu", "B", b"head-b"),
+    ):
+        table = root / modality / f"{recording_id}.parquet"
+        table.parent.mkdir(exist_ok=True)
+        table.write_bytes(content)
+
+    destination = tmp_path / "Downloads" / "focuswatch-selection"
+    written = export_selected_recordings(
+        root,
+        source_manifest,
+        {"smartwatch": True, "digital_pen": True},
+        destination,
+    )
+
+    assert written == destination
+    assert (destination / "selection.json").is_file()
+    assert (destination / "sessions.parquet").is_file()
+    assert (destination / "channels.parquet").is_file()
+    assert not (destination / ".incomplete").exists()
+    assert (destination / "watch" / "A.parquet").read_bytes() == b"watch-a"
+    assert (destination / "pen" / "A.parquet").read_bytes() == b"pen-a"
+    assert (destination / "markers" / "A.parquet").read_bytes() == b"markers-a"
+    assert not (destination / "headimu").exists()
+    assert not (destination / "watch" / "B.parquet").exists()
+
+    payload = json.loads((destination / "selection.json").read_text(encoding="utf-8"))
+    assert payload["recording_ids"] == ["A"]
+    assert payload["modalities"] == ["watch", "pen", "markers"]
+    assert pd.read_parquet(destination / "channels.parquet")["modality"].tolist() == [
+        "watch", "pen", "markers"
+    ]
+
+
+def test_export_selected_recordings_rejects_an_empty_selection(tmp_path, manifest):
+    with pytest.raises(ValueError, match="matched no recordings"):
+        export_selected_recordings(
+            tmp_path,
+            manifest,
+            {"head_imu": True, "watch_gravity": True},
+            tmp_path / "Downloads" / "selection",
+        )
+
+
+def test_export_selected_recordings_rejects_an_unsafe_recording_id(tmp_path, manifest):
+    unsafe = manifest.assign(recording_id="../outside")
+
+    with pytest.raises(ValueError, match="unsafe recording_id"):
+        export_selected_recordings(
+            tmp_path,
+            unsafe,
+            {"smartwatch": True},
+            tmp_path / "Downloads" / "selection",
+        )
+
+
+def test_export_selected_recordings_refuses_a_dangling_destination_symlink(
+    tmp_path, manifest
+):
+    destination = tmp_path / "Downloads" / "selection"
+    destination.parent.mkdir()
+    destination.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        export_selected_recordings(
+            tmp_path,
+            manifest,
+            {"smartwatch": True},
+            destination,
+        )
+
+    assert destination.is_symlink()
+
+
+def test_export_selected_recordings_refuses_an_existing_destination(tmp_path, manifest):
+    destination = tmp_path / "Downloads" / "selection"
+    destination.mkdir(parents=True)
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        export_selected_recordings(
+            tmp_path,
+            manifest,
+            {"smartwatch": True},
+            destination,
+        )
+
+
+@pytest.mark.parametrize("recording_id", ["CON", "AUX", "A:B", "session.", "session "])
+def test_export_selected_recordings_rejects_windows_unsafe_recording_ids(
+    tmp_path, manifest, recording_id
+):
+    unsafe = manifest.assign(recording_id=recording_id)
+
+    with pytest.raises(ValueError, match="unsafe recording_id"):
+        export_selected_recordings(
+            tmp_path,
+            unsafe,
+            {"smartwatch": True},
+            tmp_path / "Downloads" / "selection",
+        )
 
 
 def test_cli_missing_textual_prints_exact_install_command(tmp_path, monkeypatch, capsys):

@@ -1,6 +1,7 @@
 """Optional Textual interface for exploring manifest metadata."""
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 import re
 
@@ -10,7 +11,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Checkbox, DataTable, Footer, Header, Static
 
-from .explore import FACETS, ExplorerSelection, export_selection
+from .explore import FACETS, ExplorerSelection, export_selected_recordings
 from .load import load_manifest
 
 
@@ -103,7 +104,7 @@ class DatasetExplorerApp(App[None]):
         super().__init__()
         self.root = Path(root)
         self.manifest = load_manifest(self.root)
-        self.export_path = Path(export_path or "focuswatch-selection.json")
+        self.export_path = Path(export_path) if export_path is not None else None
         self.selection = ExplorerSelection()
         self.selected = self.manifest.copy().reset_index(drop=True)
 
@@ -182,8 +183,15 @@ class DatasetExplorerApp(App[None]):
             )
 
     def action_export(self) -> None:
-        written = export_selection(self.manifest, self.selection, self.export_path)
-        self.notify("Exported: " + ", ".join(str(path) for path in written))
+        destination = self.export_path or _default_export_directory()
+        try:
+            written = export_selected_recordings(
+                self.root, self.manifest, self.selection, destination
+            )
+        except Exception as exc:
+            self.notify(f"Export failed: {exc}", severity="error")
+            return
+        self.notify(f"Selected files exported to {written.resolve()}")
 
     def action_copy_query(self) -> None:
         self.copy_to_clipboard(self.selection.query)
@@ -196,3 +204,12 @@ class DatasetExplorerApp(App[None]):
 
     def action_provenance(self) -> None:
         self.push_screen(ProvenanceScreen(self.selected))
+
+
+def _default_export_directory(
+    *, home: Path | None = None, cwd: Path | None = None
+) -> Path:
+    downloads = (home or Path.home()) / "Downloads"
+    parent = downloads if downloads.is_dir() else (cwd or Path.cwd())
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return parent / f"focuswatch-selection-{timestamp}"

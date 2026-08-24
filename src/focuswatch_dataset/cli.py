@@ -29,7 +29,11 @@ def main(argv: list[str] | None = None) -> int:
 
     e = sub.add_parser("explore")
     e.add_argument("root", metavar="DATASET_ROOT")
-    e.add_argument("--export", default="focuswatch-selection.json", metavar="PATH")
+    e.add_argument(
+        "--export",
+        metavar="DIRECTORY",
+        help="directory for selected files (default: Downloads/focuswatch-selection-<timestamp>)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -61,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
-            DatasetExplorerApp(Path(args.root), export_path=Path(args.export)).run()
+            DatasetExplorerApp(
+                Path(args.root), export_path=Path(args.export) if args.export else None
+            ).run()
         except Exception as exc:
             print(f"explore failed: could not read bundle at {args.root}: {exc}")
             return 1

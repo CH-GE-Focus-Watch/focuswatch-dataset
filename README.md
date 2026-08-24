@@ -89,18 +89,21 @@ semantics. Use the manifest and `channels.parquet` to make a deliberate choice.
 
 ## Explore the manifest in the terminal
 
-The optional terminal UI filters only manifest metadata; it does not load or
-export sensor samples. Plain-language facets (modalities, signals, acquisition
-settings) update the recording count live, show the equivalent pandas query,
-and can export the selected manifest rows together with that query.
+The optional terminal UI filters the manifest and exports a ready-to-use subset
+of the selected recordings. Plain-language facets (modalities, signals, and
+acquisition settings) update the recording count live and show the equivalent
+pandas query. Press `e` to create a selection folder in Downloads containing
+filtered `sessions.parquet`, `channels.parquet`, `selection.json`, and the
+selected sensor files.
 
 ```bash
-fw explore DATASET_ROOT --export focuswatch-selection.json
+fw explore DATASET_ROOT
 ```
 
-Press `e` to export, `c` to copy the query, `r` to reset all filters, `p` for
-provenance details (cohort, protocol, source pipeline, build SHA), and `q` to
-quit.
+The TUI shows the full export path after completion. To choose another target
+directory, pass `--export DIRECTORY`. Press `c` to copy the query, `r` to reset
+all filters, `p` for provenance details (cohort, protocol, source pipeline,
+build SHA), and `q` to quit.
 
 ## Reproducibility and validation
 

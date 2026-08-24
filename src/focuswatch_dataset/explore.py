@@ -3,10 +3,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+import shutil
+import tempfile
 from typing import Mapping
 
 import pandas as pd
+
+from . import schema as S
 
 
 @dataclass(frozen=True)
@@ -145,12 +149,7 @@ def export_selection(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     if output.suffix.lower() == ".json":
-        # pandas normalizes NumPy scalars and missing values to JSON safely.
-        rows = json.loads(selected.to_json(orient="records"))
-        output.write_text(
-            json.dumps({"query": query, "rows": rows}, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _write_selection_json(output, selected, query)
         return (output,)
     if output.suffix.lower() == ".csv":
         selected.to_csv(output, index=False)
@@ -158,3 +157,182 @@ def export_selection(
         query_path.write_text(query + "\n", encoding="utf-8")
         return output, query_path
     raise ValueError("selection export destination must end in .csv or .json")
+
+
+_FACET_MODALITIES: dict[str, tuple[str, ...]] = {
+    "smartwatch": ("watch",),
+    "watch_gravity": ("watch",),
+    "watch_quaternion": ("watch",),
+    "watch_50_hz": ("watch",),
+    "watch_100_hz": ("watch",),
+    "acceleration_user": ("watch",),
+    "acceleration_total": ("watch",),
+    "watch_raw_acceleration": ("watch_rawaccel",),
+    "head_imu": ("headimu",),
+    "head_gravity": ("headimu",),
+    "head_quaternion": ("headimu",),
+    "head_gyro": ("headimu",),
+    "digital_pen": ("pen", "markers"),
+    "observer_annotation": ("attention",),
+}
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
+
+
+def _write_selection_json(
+    destination: Path,
+    selected: pd.DataFrame,
+    query: str,
+    *,
+    modalities: tuple[str, ...] | None = None,
+) -> None:
+    rows = json.loads(selected.to_json(orient="records"))
+    payload: dict[str, object] = {
+        "query": query,
+        "recording_ids": selected["recording_id"].tolist(),
+        "rows": rows,
+    }
+    if modalities is not None:
+        payload["modalities"] = list(modalities)
+    destination.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _selected_modalities(
+    manifest: pd.DataFrame,
+    selection: ExplorerSelection | Mapping[str, bool],
+) -> tuple[str, ...]:
+    active = _active_ids(selection)
+    requested = {
+        modality
+        for facet_id in active
+        for modality in _FACET_MODALITIES.get(facet_id, ())
+    }
+    if not requested:
+        requested = {
+            modality
+            for modality in S.MODALITIES
+            if f"has_{modality}" in manifest
+            and manifest[f"has_{modality}"].fillna(False).astype(bool).any()
+        }
+    return tuple(modality for modality in S.MODALITIES if modality in requested)
+
+
+def _copy_plan(
+    root: Path, selected: pd.DataFrame, modalities: tuple[str, ...]
+) -> list[tuple[Path, Path]]:
+    plan = []
+    for row in selected.itertuples(index=False):
+        recording_id = _safe_recording_id(row.recording_id)
+        for modality in modalities:
+            flag = f"has_{modality}"
+            if not bool(getattr(row, flag, False)):
+                continue
+            source = root / modality / f"{recording_id}.parquet"
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"selected recording {recording_id!r} declares {flag}, but {source} is missing"
+                )
+            plan.append((source, Path(modality) / source.name))
+    return plan
+
+
+def _safe_recording_id(value: object) -> str:
+    recording_id = str(value)
+    posix_path = PurePosixPath(recording_id)
+    windows_path = PureWindowsPath(recording_id)
+    windows_stem = windows_path.name.split(".", 1)[0].upper()
+    if (
+        not recording_id
+        or recording_id in {".", ".."}
+        or posix_path.name != recording_id
+        or windows_path.name != recording_id
+        or windows_path.drive
+        or windows_stem in _WINDOWS_RESERVED_NAMES
+        or recording_id.endswith((".", " "))
+        or any(character in '<>:"/\\|?*' or ord(character) < 32 for character in recording_id)
+    ):
+        raise ValueError(f"unsafe recording_id for selection export: {recording_id!r}")
+    return recording_id
+
+
+def _subset_manifest(
+    selected: pd.DataFrame, modalities: tuple[str, ...]
+) -> pd.DataFrame:
+    subset = selected.copy()
+    for flag, modality in S.CAPABILITY_FLAG_MODALITY.items():
+        if flag in subset and modality not in modalities:
+            subset[flag] = False
+    return subset
+
+
+def export_selected_recordings(
+    root: Path | str,
+    manifest: pd.DataFrame,
+    selection: ExplorerSelection | Mapping[str, bool],
+    destination: Path | str,
+) -> Path:
+    """Create a portable folder containing only the selected recordings."""
+
+    root = Path(root)
+    output = Path(destination)
+    selected = filter_manifest(manifest, selection)
+    if selected.empty:
+        raise ValueError("selection matched no recordings; nothing was exported")
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"export destination already exists: {output}")
+
+    modalities = _selected_modalities(selected, selection)
+    plan = _copy_plan(root, selected, modalities)
+    channels_path = root / "channels.parquet"
+    if not channels_path.is_file():
+        raise FileNotFoundError(f"selection export requires {channels_path}")
+    channels = pd.read_parquet(channels_path)
+    if not {"recording_id", "modality"} <= set(channels.columns):
+        raise ValueError("channels.parquet must contain recording_id and modality")
+    selected_ids = set(selected["recording_id"])
+    subset_channels = channels.loc[
+        channels["recording_id"].isin(selected_ids)
+        & channels["modality"].isin(modalities)
+    ].copy()
+    subset_manifest = _subset_manifest(selected, modalities)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}-", dir=output.parent))
+    claimed_output = False
+    try:
+        subset_manifest.to_parquet(staging / "sessions.parquet", index=False)
+        subset_channels.to_parquet(staging / "channels.parquet", index=False)
+        _write_selection_json(
+            staging / "selection.json",
+            subset_manifest,
+            selection_query(selection),
+            modalities=modalities,
+        )
+        for source, relative_destination in plan:
+            target = staging / relative_destination
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        try:
+            output.mkdir()
+        except FileExistsError as exc:
+            raise FileExistsError(f"export destination already exists: {output}") from exc
+        claimed_output = True
+        incomplete = output / ".incomplete"
+        incomplete.touch()
+        for child in staging.iterdir():
+            child.replace(output / child.name)
+        incomplete.unlink()
+        staging.rmdir()
+    except Exception:
+        if claimed_output:
+            shutil.rmtree(output, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return output

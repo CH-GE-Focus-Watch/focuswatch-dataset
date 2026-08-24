@@ -8,7 +8,11 @@ pytest.importorskip("textual")
 
 from textual.widgets import Checkbox, Static
 
-from focuswatch_dataset.tui import DatasetExplorerApp, ProvenanceScreen
+from focuswatch_dataset.tui import (
+    DatasetExplorerApp,
+    ProvenanceScreen,
+    _default_export_directory,
+)
 
 
 def build_manifest(root):
@@ -87,21 +91,17 @@ def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
     asyncio.run(scenario())
 
 
-def test_export_reads_only_sessions_manifest_and_never_sensor_data(tmp_path, monkeypatch):
+def test_export_writes_selected_sensor_files_to_the_requested_directory(tmp_path):
     root = build_manifest(tmp_path)
-    destination = tmp_path / "selection.json"
+    destination = tmp_path / "Downloads" / "selection"
     sensor = root / "watch" / "A.parquet"
     sensor.parent.mkdir()
     sentinel = b"SENSOR_SECRET_SENTINEL"
     sensor.write_bytes(sentinel)
-    parquet_reads = []
-    real_read_parquet = pd.read_parquet
-
-    def tracked_read_parquet(path, *args, **kwargs):
-        parquet_reads.append(path)
-        return real_read_parquet(path, *args, **kwargs)
-
-    monkeypatch.setattr(pd, "read_parquet", tracked_read_parquet)
+    pd.DataFrame([
+        {"recording_id": "A", "modality": "watch", "column": "accel_user_x"},
+        {"recording_id": "B", "modality": "watch", "column": "accel_total_x"},
+    ]).to_parquet(root / "channels.parquet", index=False)
 
     async def scenario():
         app = DatasetExplorerApp(root, export_path=destination)
@@ -112,13 +112,13 @@ def test_export_reads_only_sessions_manifest_and_never_sensor_data(tmp_path, mon
             await pilot.pause()
 
     asyncio.run(scenario())
-    payload = json.loads(destination.read_text(encoding="utf-8"))
-    assert set(payload) == {"query", "rows"}
+    payload = json.loads((destination / "selection.json").read_text(encoding="utf-8"))
+    assert set(payload) == {"query", "rows", "recording_ids", "modalities"}
     assert payload["query"] == "has_watch and has_gravity"
     assert [row["recording_id"] for row in payload["rows"]] == ["A"]
-    assert [str(path) for path in parquet_reads] == [str(root / "sessions.parquet")]
-    assert sensor.read_bytes() == sentinel
-    assert sentinel not in destination.read_bytes()
+    assert payload["modalities"] == ["watch"]
+    assert (destination / "watch" / "A.parquet").read_bytes() == sentinel
+    assert not (destination / "watch" / "B.parquet").exists()
 
 
 def test_copy_action_and_provenance_details_are_separate_from_overview(tmp_path, monkeypatch):
@@ -176,3 +176,12 @@ def test_natural_sort_key_orders_numbered_ids_numerically():
     assert sorted(ids, key=_natural_key) == [
         "AIRPODS-P1", "AIRPODS-P2", "AIRPODS-P10", "ML4SCS-S008"
     ]
+
+
+def test_default_export_directory_uses_downloads_or_current_directory(tmp_path):
+    home = tmp_path / "home"
+    downloads = home / "Downloads"
+    downloads.mkdir(parents=True)
+
+    assert _default_export_directory(home=home, cwd=tmp_path).parent == downloads
+    assert _default_export_directory(home=tmp_path / "no-downloads", cwd=tmp_path).parent == tmp_path
