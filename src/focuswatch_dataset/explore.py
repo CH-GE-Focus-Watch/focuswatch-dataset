@@ -111,7 +111,9 @@ class ExplorerSelection:
     active_facets: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
-        unknown = self.active_facets - set(FACETS)
+        normalized = frozenset(self.active_facets)
+        object.__setattr__(self, "active_facets", normalized)
+        unknown = normalized - set(FACETS)
         if unknown:
             raise KeyError(f"unknown explorer facet(s): {', '.join(sorted(unknown))}")
 

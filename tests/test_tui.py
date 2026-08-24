@@ -1,12 +1,14 @@
 import asyncio
 import json
-import sys
 
 import pandas as pd
+import pytest
+
+pytest.importorskip("textual")
+
 from textual.widgets import Checkbox, Static
 
-from focuswatch_dataset import cli
-from focuswatch_dataset.tui import DatasetExplorerApp
+from focuswatch_dataset.tui import DatasetExplorerApp, ProvenanceScreen
 
 
 def build_manifest(root):
@@ -55,6 +57,14 @@ def count_text(app):
     return str(app.query_one("#recording-count", Static).render())
 
 
+def table_text(table):
+    return " ".join(
+        str(cell)
+        for row_index in range(table.row_count)
+        for cell in table.get_row_at(row_index)
+    )
+
+
 def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
     root = build_manifest(tmp_path)
 
@@ -77,9 +87,21 @@ def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
     asyncio.run(scenario())
 
 
-def test_export_key_writes_only_selected_manifest_rows_and_query(tmp_path):
+def test_export_reads_only_sessions_manifest_and_never_sensor_data(tmp_path, monkeypatch):
     root = build_manifest(tmp_path)
     destination = tmp_path / "selection.json"
+    sensor = root / "watch" / "A.parquet"
+    sensor.parent.mkdir()
+    sentinel = b"SENSOR_SECRET_SENTINEL"
+    sensor.write_bytes(sentinel)
+    parquet_reads = []
+    real_read_parquet = pd.read_parquet
+
+    def tracked_read_parquet(path, *args, **kwargs):
+        parquet_reads.append(path)
+        return real_read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_parquet", tracked_read_parquet)
 
     async def scenario():
         app = DatasetExplorerApp(root, export_path=destination)
@@ -94,14 +116,35 @@ def test_export_key_writes_only_selected_manifest_rows_and_query(tmp_path):
     assert set(payload) == {"query", "rows"}
     assert payload["query"] == "has_watch and has_gravity"
     assert [row["recording_id"] for row in payload["rows"]] == ["A"]
-    assert not list(tmp_path.glob("watch/*.parquet"))
+    assert [str(path) for path in parquet_reads] == [str(root / "sessions.parquet")]
+    assert sensor.read_bytes() == sentinel
+    assert sentinel not in destination.read_bytes()
 
 
-def test_cli_missing_textual_prints_exact_install_command(tmp_path, monkeypatch, capsys):
-    build_manifest(tmp_path)
-    monkeypatch.setitem(sys.modules, "focuswatch_dataset.tui", None)
+def test_copy_action_and_provenance_details_are_separate_from_overview(tmp_path, monkeypatch):
+    root = build_manifest(tmp_path)
+    copied = []
 
-    assert cli.main(["explore", str(tmp_path)]) == 1
-    assert capsys.readouterr().out.strip() == (
-        'Explorer unavailable: install it with pip install "focuswatch-dataset[tui]"'
-    )
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection.json")
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+        async with app.run_test() as pilot:
+            await pilot.click("#facet-smartwatch")
+            await pilot.press("c")
+            await pilot.pause()
+            assert copied == ["has_watch"]
+
+            overview = " ".join(
+                str(widget.render()) for widget in app.screen.query(Static)
+            ) + table_text(app.query_one("#preview"))
+            assert "source-a" not in overview
+            assert "protocol-a" not in overview
+
+            await pilot.press("p")
+            await pilot.pause()
+            assert isinstance(app.screen, ProvenanceScreen)
+            details = table_text(app.screen.query_one("#provenance-table"))
+            assert "source-a" in details
+            assert "protocol-a" in details
+
+    asyncio.run(scenario())

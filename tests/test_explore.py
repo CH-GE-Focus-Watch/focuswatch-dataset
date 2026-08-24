@@ -1,9 +1,11 @@
 import json
+import sys
 
 import pandas as pd
 import pytest
 
 import focuswatch_dataset as fw
+from focuswatch_dataset import cli
 from focuswatch_dataset.explore import (
     FACETS,
     ExplorerSelection,
@@ -93,6 +95,17 @@ def test_explorer_selection_filters_and_counts_without_mutating_manifest(manifes
     assert manifest["recording_id"].tolist() == ["A", "B"]
 
 
+def test_explorer_selection_normalizes_mutable_input_to_frozenset():
+    active = {"smartwatch"}
+
+    selection = ExplorerSelection(active)
+    active.add("watch_gravity")
+
+    assert isinstance(selection.active_facets, frozenset)
+    assert selection.active_facets == frozenset({"smartwatch"})
+    assert selection.query == "has_watch"
+
+
 def test_facets_have_understandable_german_labels_and_manifest_conditions():
     labels = {facet.label for facet in FACETS.values()}
 
@@ -141,3 +154,12 @@ def test_export_selection_csv_writes_rows_and_reproducible_query(tmp_path, manif
 def test_export_selection_rejects_non_metadata_format(tmp_path, manifest):
     with pytest.raises(ValueError, match=r"\.csv or \.json"):
         export_selection(manifest, {}, tmp_path / "selection.parquet")
+
+
+def test_cli_missing_textual_prints_exact_install_command(tmp_path, monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "focuswatch_dataset.tui", None)
+
+    assert cli.main(["explore", str(tmp_path)]) == 1
+    assert capsys.readouterr().out.strip() == (
+        'Explorer unavailable: install it with pip install "focuswatch-dataset[tui]"'
+    )
