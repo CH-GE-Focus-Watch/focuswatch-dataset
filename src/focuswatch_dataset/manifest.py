@@ -10,8 +10,8 @@ Three guarantees this module exists to provide:
    are recomputed here directly from `bundle.tables` column presence -
    never merely trusted from an adapter's own `meta` dict, which could in
    principle disagree with the data it describes. Which flags these are,
-   which table each looks in, and which column each looks for comes from
-   `schema.CAPABILITY_FLAG_MODALITY`/`schema.CAPABILITY_FLAG_COLUMN`, the
+   which table each looks in, and which complete vector each looks for comes
+   from `schema.CAPABILITY_FLAG_MODALITY`/`schema.CAPABILITY_FLAG_COLUMNS`, the
    same tables `validate.check_coverage` reads its modality bindings from -
    so a flag `check_coverage` starts gating on can never silently fall out
    of sync with what this module derives from the tables (see
@@ -241,16 +241,24 @@ def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
         for m in S.MODALITIES:
             row[f"has_{m}"] = m in b.tables
         # Capability sub-flags: same structural treatment, driven by
-        # S.CAPABILITY_FLAG_COLUMN (which column) paired with
+        # S.CAPABILITY_FLAG_COLUMNS (which complete vector) paired with
         # S.CAPABILITY_FLAG_MODALITY (which table) - not five literal lines.
         # A flag added to those shared tables later is derived correctly here
         # with no matching edit in this module; before this loop existed, a
         # flag missing its own literal line fell through to _DEFAULTS' False
         # regardless of what the data actually said (see fix round 2's
         # mutation in the task report).
-        for flag, column in S.CAPABILITY_FLAG_COLUMN.items():
+        for flag, columns in S.CAPABILITY_FLAG_COLUMNS.items():
             table = b.tables.get(S.CAPABILITY_FLAG_MODALITY[flag])
-            row[flag] = table is not None and column in table.columns
+            present = set(columns) & set(table.columns) if table is not None else set()
+            if present and len(present) != len(columns):
+                capability = flag.removeprefix("has_").replace("_", " ")
+                missing = sorted(set(columns) - present)
+                raise ValueError(
+                    f"partial {capability} vector for capability '{flag}': "
+                    f"missing {missing}"
+                )
+            row[flag] = len(present) == len(columns)
         watch = b.tables.get("watch")
         if watch is not None:
             row["watch_hz_measured"] = _rate(watch)

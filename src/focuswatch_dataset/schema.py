@@ -198,28 +198,29 @@ CAPABILITY_FLAG_MODALITY: dict[str, str] = {
     "has_head_gyro": "headimu",
 }
 
-# Which real column manifest.build_manifest checks for, within the table
+# Which complete vector manifest.build_manifest checks for, within the table
 # CAPABILITY_FLAG_MODALITY names, to structurally derive a capability
-# sub-flag. Paired with CAPABILITY_FLAG_MODALITY rather than folded into it,
-# because the six has_<modality> flags in MODALITY_FLAGS need no column check
-# (table presence alone is the fact they describe) and keeping their value
-# type a plain modality string is what lets validate.check_coverage use
-# CAPABILITY_FLAG_MODALITY[flag] directly as a modality name. A flag added
-# here (and to CAPABILITY_FLAG_MODALITY) is derived by build_manifest with no
-# further code change - see that module's structural-flag loop.
-CAPABILITY_FLAG_COLUMN: dict[str, str] = {
-    "has_gravity": "gravity_x",
-    "has_quaternion": "quat_x",
-    "has_head_gravity": "gravity_x",
-    "has_head_quaternion": "quat_x",
-    "has_head_gyro": "gyro_x",
+# sub-flag. A partial vector is malformed rather than evidence that the
+# capability is absent, so each value intentionally comes from COLUMNS rather
+# than naming only an x component. Paired with CAPABILITY_FLAG_MODALITY rather
+# than folded into it, because the six has_<modality> flags in MODALITY_FLAGS
+# need no column check (table presence alone is the fact they describe) and
+# keeping their value type a plain modality string is what lets
+# validate.check_coverage use CAPABILITY_FLAG_MODALITY[flag] directly as a
+# modality name.
+CAPABILITY_FLAG_COLUMNS: dict[str, tuple[str, ...]] = {
+    "has_gravity": COLUMNS[Quantity.GRAVITY],
+    "has_quaternion": COLUMNS[Quantity.QUAT],
+    "has_head_gravity": COLUMNS[Quantity.GRAVITY],
+    "has_head_quaternion": COLUMNS[Quantity.QUAT],
+    "has_head_gyro": COLUMNS[Quantity.GYRO],
 }
 
 # Why: both tables are keyed by the same sub-flags and can only drift apart in
 # silence - one named here but not there is derived and never required; the
 # reverse is required and never derived. Checking the key sets at import turns
 # that into an immediate failure rather than a check that stops firing.
-assert set(CAPABILITY_FLAG_COLUMN) == set(CAPABILITY_FLAG_MODALITY) - set(MODALITY_FLAGS), (
-    "CAPABILITY_FLAG_COLUMN must name exactly the capability sub-flags: "
+assert set(CAPABILITY_FLAG_COLUMNS) == set(CAPABILITY_FLAG_MODALITY) - set(MODALITY_FLAGS), (
+    "CAPABILITY_FLAG_COLUMNS must name exactly the capability sub-flags: "
     f"{sorted(set(CAPABILITY_FLAG_MODALITY) - set(MODALITY_FLAGS))}"
 )

@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from . import docs
@@ -119,6 +120,8 @@ def _load_bundle(name: str, root: Path) -> list[RecordingBundle]:
         refs = adapter.discover(Path(root))
     except Exception as exc:
         raise RuntimeError(f"discovery failed for source '{name}' at {root}: {exc}") from exc
+    if not refs:
+        raise RuntimeError(f"source '{name}' at {root} discovered no recordings")
 
     bundles = []
     for ref in refs:
@@ -131,6 +134,14 @@ def _load_bundle(name: str, root: Path) -> list[RecordingBundle]:
         bundle.meta["build_git_sha"] = _git_sha()
         bundles.append(bundle)
     return bundles
+
+
+def _require_unique_recording_ids(bundles: list[RecordingBundle]) -> None:
+    """Refuse ambiguous output names before validation or staging begins."""
+    counts = Counter(bundle.ref.recording_id for bundle in bundles)
+    duplicates = sorted(recording_id for recording_id, count in counts.items() if count > 1)
+    if duplicates:
+        raise RuntimeError(f"duplicate recording_id values: {', '.join(duplicates)}")
 
 
 def _gap_finding(gap: str) -> Finding:
@@ -265,6 +276,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     _warn_about_interrupted_promotions(out)
     _refuse_foreign_directory(out)
     report = ValidationReport()
+    loaded_bundles: list[RecordingBundle] = []
     bundles: list[RecordingBundle] = []
 
     # Why: sorted() on the caller-supplied dict, not the dict's own insertion
@@ -273,14 +285,18 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     # dict comprehension over os.listdir), not merely regardless of calling
     # build_dataset twice with the exact same dict object.
     for name, root in sorted(source_roots.items()):
-        for bundle in _load_bundle(name, root):
-            # Why: redact_bundle, not a hand-rolled apply_redaction + meta
-            # stamp - it is the one seam that guarantees the published
-            # redaction_policy meta can never disagree with what was
-            # actually done to the pen table (see redact.py's docstring).
-            bundle = redact_bundle(bundle, policy)
-            report.findings += _validate(bundle)
-            bundles.append(bundle)
+        loaded_bundles.extend(_load_bundle(name, root))
+
+    _require_unique_recording_ids(loaded_bundles)
+
+    for bundle in loaded_bundles:
+        # Why: redact_bundle, not a hand-rolled apply_redaction + meta
+        # stamp - it is the one seam that guarantees the published
+        # redaction_policy meta can never disagree with what was
+        # actually done to the pen table (see redact.py's docstring).
+        bundle = redact_bundle(bundle, policy)
+        report.findings += _validate(bundle)
+        bundles.append(bundle)
 
     manifest_preview = build_manifest(bundles)
     # Why (C4): computed once per bundle here, passed explicitly rather than

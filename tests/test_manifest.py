@@ -77,6 +77,15 @@ def test_measured_rate_is_derived_not_copied():
     assert m["watch_hz_measured"] == pytest.approx(100.0)
 
 
+def test_build_manifest_rejects_a_partial_gravity_vector():
+    """A lone gravity component is malformed, not an absent capability."""
+    partial = bundle()
+    partial.tables["watch"] = pd.DataFrame({"t_ns": [0, 1], "gravity_x": [0.0, 0.0]})
+
+    with pytest.raises(ValueError, match="partial gravity vector"):
+        build_manifest([partial])
+
+
 def test_channels_declare_a_unit_for_every_signal_column():
     ch = build_channels([bundle()])
     signal = ch[ch["column"] != "t_ns"]
@@ -198,7 +207,7 @@ def test_manifest_built_from_a_real_bundle_drives_coverage_for_head_gyro():
 
 def test_a_flag_added_only_to_the_shared_tables_is_derived_with_no_new_manifest_py_line(monkeypatch):
     """Fix-round-2 item 1: build_manifest's structural sub-flags come from a
-    loop over S.CAPABILITY_FLAG_COLUMN (paired with S.CAPABILITY_FLAG_
+    loop over S.CAPABILITY_FLAG_COLUMNS (paired with S.CAPABILITY_FLAG_
     MODALITY for which table), not five literal lines. A synthetic flag
     added only to those two shared tables - with no matching code added to
     manifest.py, because the loop already covers it - must still be derived
@@ -210,8 +219,9 @@ def test_a_flag_added_only_to_the_shared_tables_is_derived_with_no_new_manifest_
     """
     monkeypatch.setattr(S, "CAPABILITY_FLAG_MODALITY",
                         {**S.CAPABILITY_FLAG_MODALITY, "has_synthetic_capability": "watch"})
-    monkeypatch.setattr(S, "CAPABILITY_FLAG_COLUMN",
-                        {**S.CAPABILITY_FLAG_COLUMN, "has_synthetic_capability": "synthetic_x"})
+    monkeypatch.setattr(S, "CAPABILITY_FLAG_COLUMNS",
+                        {**S.CAPABILITY_FLAG_COLUMNS,
+                         "has_synthetic_capability": ("synthetic_x",)})
     monkeypatch.setattr(manifest_module, "MANIFEST_COLUMNS",
                         manifest_module.MANIFEST_COLUMNS + ("has_synthetic_capability",))
 

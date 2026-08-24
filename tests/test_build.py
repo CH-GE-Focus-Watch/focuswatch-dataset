@@ -12,6 +12,7 @@ from focuswatch_dataset.load import load_manifest
 from focuswatch_dataset.manifest import check_manifest_consistency
 from focuswatch_dataset.redact import RedactionPolicy
 from focuswatch_dataset.write import read_table
+from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 
 from .test_adapter_airpods import write_fixture as write_airpods
 from .test_adapter_ege import write_fixture as write_ege
@@ -28,6 +29,30 @@ def sources(tmp_path):
         writer(d)
         roots[name] = d
     return roots
+
+
+def test_build_refuses_a_requested_source_that_discovers_no_recordings(tmp_path):
+    """An explicitly requested source must not quietly yield an empty archive."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    with pytest.raises(RuntimeError, match="airpods.*no recordings"):
+        build_dataset({"airpods": empty}, tmp_path / "out")
+
+
+def test_build_refuses_duplicate_recording_ids_before_writing(tmp_path, monkeypatch):
+    """Duplicate IDs must fail before validation, manifest construction, or staging."""
+    import focuswatch_dataset.build as build_mod
+
+    duplicate = RecordingBundle(
+        RecordingRef("ML4SCS-S001", "P", "ML4SCS", "ml4scs", Path(".")), {}, {}
+    )
+    monkeypatch.setattr(build_mod, "_load_bundle", lambda name, root: [duplicate, duplicate])
+
+    with pytest.raises(RuntimeError, match="duplicate recording_id"):
+        build_dataset({"ml4scs": tmp_path}, tmp_path / "out")
+
+    assert not (tmp_path / "out").exists()
 
 
 def test_build_produces_all_expected_artefacts(tmp_path):
