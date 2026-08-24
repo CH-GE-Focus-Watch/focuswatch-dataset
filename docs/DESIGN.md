@@ -29,7 +29,7 @@ gitignored). 67 Recordings aus vier Quell-Pipelines:
 |---|---:|---|---|
 | ML4SCS | 33 | Watch + Pen + Marker (lückenlos) | Pen `dot_type`, Task-Marker |
 | ETH Ege-Pipeline | 2 (T6, T7) | Watch + Head + Pen + Web-Events | Pen-Events, Phasen-Events |
-| ETH SensorLogger | 7 (E1–E3, T8–T10, S3) | Wrist + Head (+ Roh-Accel in 6/7) | Pen-Events im Session-JSON (alle 7 — E1–E3 verschachtelt in `events`, T8–T10/S3 unter dem separaten `pen_events`-Key, siehe C3 unten), Phasen-Events |
+| ETH SensorLogger | 7 (E1–E3, T8–T10, S3) | Wrist + Head (+ Roh-Accel in 6/7) | Pen-Events im Session-JSON (E1–E3 in `events`, T8–T10/S3 unter `pen_events`), Phasen-Events |
 | AirPods-Attention | 25 (P1–P19, P21–P26) | Head-IMU (~25 Hz) | Beobachter-Intervalle |
 
 Gemessene Modalitäts-Abdeckung — sie ist bewusst lückenhaft, und genau das
@@ -48,7 +48,7 @@ begründet das Flag-Modell:
 unter einem separaten, flachen `pen_events`-Key statt (wie bei E1–E3)
 verschachtelt in `events` — der ursprüngliche `foreign_adapter` las nur
 `events` und hat sie deshalb nie verarbeitet; das sah aus wie "trägt keine
-Strokes", war aber ein ungelesener Key (C3). Behoben: alle vier publizieren
+Strokes", sondern ein ungelesener Key. Alle vier publizieren
 `has_pen = true` mit 4.697 / 1.322 / 8.885 / 17.509 Stroke-Zeilen (32.413
 insgesamt); ihre `pen_paper_info`-Framing-Events (290 / 58 / 493 / 959) landen,
 wie bei E1–E3, in `markers/`.
@@ -238,8 +238,8 @@ verändert keine Norm und wirft keine Exception.
 
 ## 6. Kanonisches Schema
 
-Innerhalb einer Modalität publiziert jedes Recording **dasselbe Spaltenset**
-(I15) — fehlt einer Quelle ein Feld (kein Payload, keine Pen-Geräteuhr, kein
+Innerhalb einer Modalität publiziert jedes Recording **dasselbe Spaltenset**:
+Fehlt einer Quelle ein Feld (kein Payload, keine Pen-Geräteuhr, kein
 Session-relativer Offset), ist die Spalte leer (`NaN`/`""`), nie abwesend. Ein
 Nachnutzer, der z. B. `pen/` oder `markers/` über Kohorten hinweg
 konkateniert, bekäme sonst einen ragged Frame, in dem ein Filter wie

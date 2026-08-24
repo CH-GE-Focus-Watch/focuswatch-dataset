@@ -55,7 +55,7 @@ class EgeAdapter:
         events = d / "events.csv"
         session_markers, dropped_keys, handedness = (
             self._markers(events) if events.exists() else (None, 0, "unknown"))
-        # Why (C3/I8): pen_paper_info and pen_session_sync carry no position,
+        # pen_paper_info and pen_session_sync carry no position,
         # so neither belongs in pen/ - both route to markers/ instead,
         # matching what the SensorLogger adapter already does with
         # pen_session_sync (DESIGN §8.1). They come from a different source
@@ -72,20 +72,8 @@ class EgeAdapter:
             # one anyway would fabricate a fact the source doesn't carry. The
             # validator falls back to the measured rate.
             "watch_hz_nominal": None,
-            # Why: derived from the emitted table, not asserted independently -
-            # a hardcoded flag and the actual columns can drift out of sync.
-            "has_gravity": "gravity_x" in watch.columns,
-            "has_quaternion": "quat_x" in watch.columns,
-            # Why: whether headimu carries a gyroscope is a DATA fact, not
-            # structural - this source's head table never has gx/gy/gz (the
-            # fixture confirms; head_motion_samples_rows.csv has no g*
-            # columns), so this declares false and check_coverage requires
-            # nothing of it, rather than exempting headimu wholesale.
-            "has_head_gyro": "headimu" in tables and "gyro_x" in tables["headimu"].columns,
             "accel_semantics": "total",
-            # Why (C5/I9): read from the same session_start payload the
-            # SensorLogger adapter reads it from, so both ETH pipelines publish
-            # the covariate rather than only one of them.
+            # Shared session_start payload keeps the ETH covariate consistent.
             "handedness": handedness,
             "src_payload_dropped_key_count": dropped_keys,
             # Established by a still-window test on the real corpus: the norm sits at
@@ -94,7 +82,7 @@ class EgeAdapter:
             "accel_calibration": "raw_uncalibrated",
             "accel_still_bias": self._still_bias(watch),
             "gravity_source": "none",
-            # Why (C2): the backend stamps every modality on the same wall
+            # The backend stamps every modality on the same wall
             # clock for this cohort (DESIGN §5.0's shared_clock regime), so
             # every table this adapter emits gets the identical domain -
             # declared per modality anyway, so a future modality with a
@@ -103,7 +91,7 @@ class EgeAdapter:
                 "watch": "backend_wall_clock", "headimu": "backend_wall_clock",
                 "pen": "backend_wall_clock", "markers": "backend_wall_clock",
             },
-            # Why (item 1, fix round C): src_t_session_ms (wherever it
+            # src_t_session_ms (wherever it
             # appears - pen_events.csv and events.csv both carry it) is a
             # session-relative millisecond offset, not a wall-clock reading -
             # no clock name would be honest for it. pen.src_timestamp is
@@ -123,7 +111,7 @@ class EgeAdapter:
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web",
             "study_mode": "study",
-            # Why (C3): Ege is generation A (see schema.py's PEN_EVENTS_GEN_A);
+            # Ege is generation A (see schema.py's PEN_EVENTS_GEN_A);
             # the label follows the export generation, not this pipeline
             # directory - SensorLogger's own generation-A recordings
             # (S3/T8/T9/T10) get the identical value.
@@ -175,7 +163,7 @@ class EgeAdapter:
     def _pen(self, path: Path) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
         """Strokes -> pen/, non-stroke events (pen_paper_info/pen_session_sync) -> markers/.
 
-        Both live in this same CSV (C3/I8) - split here rather than have two
+        Both live in this CSV; split them here rather than have two
         methods each re-read the file.
         """
         raw = pd.read_csv(path)
@@ -187,11 +175,8 @@ class EgeAdapter:
                 "dot_type": strokes["type"].map(S.PEN_EVENTS_GEN_A).to_numpy(),
                 "x": strokes["x"].astype(float).to_numpy(), "y": strokes["y"].astype(float).to_numpy(),
                 "pressure": strokes["force"].astype(float).to_numpy(),
-                # Why (C3/I15): generation A has no tilt sensor data and no
-                # pen-device clock, but the OTHER generation-A source (the
-                # SensorLogger export) already emits these as NaN - two shapes
-                # for one export generation is the drift C3 set out to remove.
-                # Empty here, not absent.
+                # Generation A has no tilt or pen-device clock; NaN preserves
+                # the shared pen schema.
                 "tilt_x": np.nan, "tilt_y": np.nan, "src_timestamp": np.nan,
                 "src_t_session_ms": strokes["t_session_ms"].to_numpy(),
             })
@@ -207,7 +192,7 @@ class EgeAdapter:
                 "event": non_stroke["type"].astype(str),
                 "task_id": "", "task_name": "", "task_index": np.nan,
                 "task_category": "", "protocol_id": "eth_web",
-                # Why (I15): these rows come from pen_events.csv, which has no
+                # These rows come from pen_events.csv, which has no
                 # payload column - but one modality must carry one column set,
                 # so the column exists here and is empty rather than absent.
                 "src_payload": "",
@@ -217,7 +202,7 @@ class EgeAdapter:
 
     def _markers(self, path: Path) -> tuple[pd.DataFrame, int, str]:
         raw = pd.read_csv(path)
-        # Why (C5): this export carries the same session_start payload as the
+        # This export carries the same session_start payload as the
         # SensorLogger one - `user_agent` and `screen` included - so it needs the
         # same allow-list. Cleaning only one adapter left the fingerprint in the
         # published Ege markers.
@@ -231,7 +216,7 @@ class EgeAdapter:
         out = pd.DataFrame({
             "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
             "event": raw["event_type"].astype(str),
-            # Why (I15): NaN, not -1 - one encoding for "not applicable" across
+            # NaN, not -1: use one encoding for "not applicable" across
             # cohorts. -1 looks like a valid index to a reuser filtering
             # `task_index >= 0`; NaN cannot be mistaken for one.
             "task_id": "", "task_name": "", "task_index": np.nan,

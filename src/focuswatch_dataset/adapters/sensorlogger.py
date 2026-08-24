@@ -63,7 +63,7 @@ def _harmonise_gravity_to_g(xyz: np.ndarray) -> tuple[np.ndarray, float]:
 
     Returns the harmonised array AND the factor actually applied (1.0 or
     1/G_TO_MS2) - this is a per-recording runtime decision (the same adapter
-    code can go either way depending on the measured magnitude), so C1's
+    code can go either way depending on the measured magnitude), so the
     published unit_conversion_factor has to come from here, not be
     re-declared as a constant beside it.
     """
@@ -85,7 +85,7 @@ class SensorLoggerAdapter:
 
     @classmethod
     def _participant_token(cls, d: Path) -> str:
-        """The session's own participant id, from session_start's payload (I9).
+        """Return the participant id from session_start's payload.
 
         Never parsed from the directory name - real directories carry
         session suffixes (`E1_session3`, `focuswatch_T10_s1_d7498f51`) that
@@ -118,7 +118,7 @@ class SensorLoggerAdapter:
 
         watch_df, watch_factors = self._motion(d / "WristMotion.csv", accel_factor)
         tables = {"watch": watch_df}
-        # Why (C1): keyed by (modality, column) - the factor actually applied,
+        # Keyed by (modality, column): record the factor actually applied
         # per the brief's shape. Populated as each table is built, right next
         # to the division it records, so it cannot drift from what happened.
         column_factors: dict[tuple[str, str], float] = {
@@ -145,21 +145,9 @@ class SensorLoggerAdapter:
 
         meta = {
             "watch_hz_nominal": _watch_hz_nominal(metadata),
-            "has_gravity": "gravity_x" in tables["watch"].columns,
-            "has_quaternion": "quat_x" in tables["watch"].columns,
-            # Why: the Head-Capabilities pair, kept distinct from the
-            # Watch-Capabilities has_gravity/has_quaternion above - the
-            # headphone stream's gravity is real (measured, harmonised from
-            # m/s2) and must feed its own coverage requirement, not the
-            # watch's.
-            "has_head_gravity": "headimu" in tables and "gravity_x" in tables["headimu"].columns,
-            "has_head_quaternion": "headimu" in tables and "quat_x" in tables["headimu"].columns,
-            "has_head_gyro": "headimu" in tables and "gyro_x" in tables["headimu"].columns,
-            "has_watch_rawaccel": "watch_rawaccel" in tables,
-            "has_pen": "pen" in tables,
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",
-            # Why (C2): this backend stamps every modality on the same wall
+            # This backend stamps every modality on the same wall
             # clock (DESIGN §5.0's shared_clock regime) - declared per
             # modality, like the ege adapter, not once for the whole recording.
             "time_domain_by_modality": {
@@ -167,10 +155,9 @@ class SensorLoggerAdapter:
                 "watch_rawaccel": "backend_wall_clock",
                 "pen": "backend_wall_clock", "markers": "backend_wall_clock",
             },
-            # Why (item 1, fix round C): pen.src_timestamp is the pen
+            # pen.src_timestamp is the pen
             # hardware's own free-running clock (~749 days off backend_wall_
-            # clock, measured on ETH-SL-E2 - whole-branch-review-2.md finding
-            # 1), populated for generation-B recordings and structurally NaN
+            # clock, populated for generation-B recordings and structurally NaN
             # for generation A (same physical column as ml4scs.py's
             # pen.src_timestamp and ege.py's). src_t_session_ms is a
             # session-relative millisecond offset, not a wall-clock reading.
@@ -181,7 +168,7 @@ class SensorLoggerAdapter:
             },
             "time_alignment": "shared_clock",
             "protocol_id": "eth_web", "study_mode": "study",
-            # Why (C3): follows the EXPORT GENERATION, not this pipeline
+            # Follows the export generation, not this pipeline
             # directory - genA (S3/T8/T9/T10) gets the same value as Ege's
             # own genA export; genB (E1/E2/E3) is kept distinct (see
             # schema.py's PEN_XY_UNIT_GEN_* docstring for why).
@@ -191,12 +178,12 @@ class SensorLoggerAdapter:
             "src_standardisation": si,
             "unit_conversion_factor_by_column": column_factors,
             "session_start_ns": self._session_start_ns(metadata),
-            # Why (C5): promoted from a buried, unread payload field to a
+            # Promoted from a payload field to a
             # typed manifest column - nothing read it while watch_wrist_side
             # published "unknown" for all 9 ETH recordings even though the
             # source states it.
             "handedness": handedness,
-            # Why (C5): internal-only (see manifest._INTERNAL_META_KEYS) -
+            # Internal-only (see manifest._INTERNAL_META_KEYS):
             # surfaced as a validate.py Finding, not a manifest column, so a
             # future export's new payload field is visible in
             # validation_report.json rather than silently dropped.
@@ -224,9 +211,7 @@ class SensorLoggerAdapter:
         out[list(S.COLUMNS[S.Quantity.GRAVITY])] = gravity
         out[list(S.COLUMNS[S.Quantity.QUAT])] = (
             raw[["quaternionX", "quaternionY", "quaternionZ", "quaternionW"]].astype(float).to_numpy())
-        # Why (C1): gyro and quaternion columns are never scaled - 1.0 for them
-        # is the true identity factor, not a placeholder. Only acceleration and
-        # gravity carry a possibly-non-1.0 factor.
+        # Gyro and quaternion are unscaled; only acceleration and gravity vary.
         factors = {c: accel_factor for c in S.COLUMNS[S.Quantity.ACCEL_USER]}
         factors.update({c: gravity_factor for c in S.COLUMNS[S.Quantity.GRAVITY]})
         return sort_stable_by_time(out), factors
@@ -245,10 +230,7 @@ class SensorLoggerAdapter:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
         return json.loads(candidates[0].read_text())
 
-    # Why (C5): the redaction rule and the handedness lookup live in eth_web
-    # because BOTH ETH pipelines export this payload. Keeping a private copy
-    # here is what let the Ege markers keep publishing `user_agent` after these
-    # were cleaned.
+    # Both ETH pipelines share payload redaction and handedness extraction.
     _redact_payload = staticmethod(redact_payload)
 
     @staticmethod
@@ -263,7 +245,7 @@ class SensorLoggerAdapter:
         events = payload["events"]
         handedness = self._handedness(events)
 
-        # Why (C3): generation A (S3/T8/T9/T10) stores strokes under a
+        # Generation A stores strokes under a
         # separate, flat `pen_events` key (type/x/y/force, no payload
         # wrapper, no tilt, no pen-device clock) instead of inside `events`
         # (generation B: E1/E2/E3). Detected structurally by key presence,
@@ -280,8 +262,7 @@ class SensorLoggerAdapter:
                 # Why: fail loudly and specifically rather than a bare
                 # KeyError - the flat generation-A pen_events shape
                 # (t_ms/type/x/y/force, no payload wrapper) is inferred from
-                # whole-branch-review-findings.md's C3, not verified against a
-                # real S3/T8/T9/T10 export in this environment.
+                # the documented export shape.
                 missing = [k for k in ("t_ms", "type") if k not in e]
                 if missing:
                     raise ValueError(
@@ -311,14 +292,14 @@ class SensorLoggerAdapter:
                 "dot_type": [dot_types[e["event"]] for e in strokes],
                 "x": [e["payload"].get("x", np.nan) for e in strokes],
                 "y": [e["payload"].get("y", np.nan) for e in strokes],
-                # Why (I15): float64 even though this source states whole
+                # float64 even though this source states whole
                 # numbers. Pressure and tilt are physical quantities, and a
                 # cohort whose values happen to be integers must not publish a
                 # different dtype for the same column. src_timestamp is
                 # millisecond-magnitude, far inside float64's exact range.
                 "pressure": np.array([e["payload"].get("force", np.nan)
                                       for e in strokes], dtype=float),
-                # Why (C3): generation A carries no tilt and no pen-device
+                # Generation A carries no tilt or pen-device
                 # clock (open question 4) - NaN here is honest, not a bug.
                 "tilt_x": np.array([e["payload"].get("tilt", {}).get("x", np.nan)
                                     for e in strokes], dtype=float),
@@ -327,7 +308,7 @@ class SensorLoggerAdapter:
                 # Why: the pen's own clock, roughly 749 days behind wall clock. Metadata only.
                 "src_timestamp": np.array([e["payload"].get("timestamp", np.nan)
                                            for e in strokes], dtype=float),
-                # Why (I15): the session-relative offset the Ege export also
+                # The session-relative offset that Ege also
                 # publishes - one column set per modality, so it is present here
                 # rather than leaving that cohort's pen tables a different shape.
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in strokes],
@@ -342,10 +323,10 @@ class SensorLoggerAdapter:
             markers = sort_stable_by_time(pd.DataFrame({
                 "t_ns": to_unix_ns(np.array([e["t_ms"] for e in others], dtype=np.int64), "ms"),
                 "event": [e["event"] for e in others],
-                # Why (I15): NaN, not -1 - see ege.py's identical fix for the rationale.
+                # NaN, not -1, represents an inapplicable task index.
                 "task_id": "", "task_name": "", "task_index": np.nan,
                 "task_category": "", "protocol_id": "eth_web",
-                # Why (C5): allow-listed, not the raw payload - user_agent/
+                # Allow-listed, not the raw payload: user_agent/
                 # screen/notes must never reach the public bundle.
                 "src_payload": [json.dumps(p) for p, _ in redacted],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],

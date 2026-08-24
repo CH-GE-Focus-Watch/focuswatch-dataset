@@ -13,9 +13,7 @@ import pandas as pd
 
 from . import schema as S
 
-# I4: a Frictionless resource `name` is lowercase alphanumeric plus `.`, `-`,
-# `_` only - no `/`, no upper case. `path` (the actual file location) is left
-# untouched; only the descriptor's own `name` field needs slugifying.
+# Frictionless resource names are lowercase alphanumeric plus `.`, `-`, or `_`.
 _SLUG_INVALID = re.compile(r"[^a-z0-9._-]+")
 
 
@@ -23,12 +21,7 @@ def _slugify(name: str) -> str:
     return _SLUG_INVALID.sub("-", name.lower())
 
 
-# I12: `write_datapackage` below asserts CC-BY-4.0 in `datapackage.json`'s
-# `licenses` field; without an actual LICENSE file beside it that assertion
-# is unbacked - a downloader has the claim but not the license text. Kept
-# short (a summary + the canonical link), matching how CC licenses are
-# normally shipped: the full legal code is long and lives at the
-# Creative Commons URL, not duplicated per-archive.
+# Package metadata and the bundled license file must name the same license.
 _DATA_LICENSE_TEXT = """\
 FocusWatch dataset - data license
 
@@ -53,11 +46,7 @@ def write_license(out: Path) -> None:
 
 
 def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
-    # I4: without these four, a Frictionless consumer only ever sees the
-    # per-recording modality tables and sessions.csv - never channels.parquet
-    # (the one place a column's unit/semantics is declared), never the
-    # validation evidence, never the dictionary that explains the unit
-    # vocabulary.
+    # Include schema, validation, and unit-vocabulary resources for consumers.
     resources = [
         {"name": "sessions", "path": "sessions.csv", "format": "csv"},
         {"name": "sessions-parquet", "path": "sessions.parquet", "format": "parquet"},
@@ -90,7 +79,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
     """Bundle entry point + recipe chapters (DESIGN §4).
 
     Every count below is read from `manifest`/`channels`/`out` itself - not
-    restated, so it cannot drift from the archive it describes (I4).
+    restated, so it cannot drift from the archive it describes.
     """
     counts = _modality_file_counts(out)
     n_recordings = len(manifest)
@@ -164,12 +153,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
     (out / "README.md").write_text("\n".join(lines) + "\n")
 
 
-# I5: the unit vocabulary glossary. Previously defined only in
-# docs/DESIGN.md (German, never shipped in the bundle) and a schema.py code
-# comment (_KNOWN_METADATA_COLUMNS) a reuser downloading the archive never
-# sees. Physical quantities carry their own SI-ish unit directly (g, rad/s,
-# "1" for a unit quaternion, "ns" for a timestamp); every other column's
-# `unit` cell is one of these five.
+# Standalone glossary for the non-physical unit vocabulary.
 _UNIT_VOCABULARY = (
     ("category", "one of a fixed, enumerated set of string values."),
     ("ordinal", "the position of an item within a sequence, not a magnitude "
@@ -185,15 +169,8 @@ _UNIT_VOCABULARY = (
     ("n/a", "no physical or source unit applies (e.g. a categorical id)."),
 )
 
-# Item 1 (fix round C): the FIVE terms manifest.build_channels uses to
-# override a src_-prefixed provenance column's `time_domain` away from its
-# modality's default (see schema.py's TIME_DOMAIN_* constants, the single
-# source these values come from). This is not the complete `time_domain`
-# vocabulary - a modality's own default is a free-form, per-adapter clock
-# name (`watch_capture_clock`, `server_wall_clock`, `backend_wall_clock`,
-# `device_wall_clock`, ...) naming a specific pipeline's clock, open-ended
-# by design - only the OVERRIDE terms below are a fixed set worth defining
-# once.
+# Fixed time-domain overrides for src_-prefixed provenance columns. A
+# modality's primary clock remains adapter-defined.
 _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
     (S.TIME_DOMAIN_PEN_DEVICE_CLOCK, "the pen hardware's own free-running clock - unaligned to "
                                      "any wall clock in this bundle. Moleskine's own device clock "
@@ -212,28 +189,13 @@ _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
                                            "`src_sensor_timestamp_s`."),
 )
 
-# I5 (open question 4): the real Ege `pen_events.csv` header, measured
-# directly from the source - NOT `t_ms, x, y, force, tilt.x, tilt.y,
-# timestamp` as an earlier draft of docs/DESIGN.md assumed. Ege's export
-# carries neither tilt nor a pen-device clock at all.
+# Ege pen-event columns; its export has neither tilt nor a pen-device clock.
 _EGE_PEN_EVENTS_HEADER = "id, session_id, t_ms, t_session_ms, type, x, y, force, created_at"
 
 
 def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
-    # C2: the old sentence named a single recording-level `time_domain` as
-    # covering every timestamp in a recording. False for any cohort whose
-    # modalities are not all on one clock (ML4SCS: watch on its own capture
-    # clock, pen/markers on the server clock) - the clock is only truthfully
-    # named per (recording, modality) in channels.parquet's own `time_domain`
-    # column, which the table below now includes.
-    # Item 1 (fix round C): C2's per-modality fix still stamped a
-    # provenance column with its modality's clock even where that column is
-    # demonstrably not on it (pen.src_timestamp published 749-923 days off
-    # the declared clock on the real corpus - whole-branch-review-2.md
-    # finding 1). manifest.build_channels now overrides `time_domain` per
-    # (modality, column) for those columns, so the sentence below - and the
-    # reading instruction it gives - is per (recording, modality, column),
-    # not just (recording, modality).
+    # channels.parquet declares time domains per recording, modality, and
+    # column because canonical and provenance timestamps can use different clocks.
     lines = ["# Data dictionary", "",
              "Units are canonical across the bundle: acceleration and gravity in g,",
              "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
@@ -323,12 +285,7 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
                      f"{r.semantics} | {r.time_domain} | {r.recordings} |")
 
-    # I5/item 2 (fix round C): channels.parquet's own `unit` cell for pen
-    # x/y/pressure is the closed-vocabulary "device_native" (every recording
-    # collapses to the same row in the Channels table above) - the actual
-    # per-recording scale is a manifest fact, not a `unit`-cell fact, so it
-    # is tied to a recording_id here instead, straight from the manifest
-    # columns that already carry it.
+    # Pen channels use `device_native`; their per-recording scale is manifest metadata.
     pen_rows = manifest.loc[manifest["has_pen"],
                             ["recording_id", "cohort", "pen_xy_unit", "pen_pressure_scale"]]
     if len(pen_rows):

@@ -106,12 +106,12 @@ def test_legacy_recording_has_no_gravity_columns(tmp_path):
     ref = next(r for r in a.discover(tmp_path) if r.recording_id == "ML4SCS-S008")
     bundle = a.load(ref)
     assert "gravity_x" not in bundle.tables["watch"].columns
-    assert bundle.meta["has_gravity"] is False
+    assert not bool(build_manifest([bundle]).iloc[0]["has_gravity"])
     assert bundle.meta["watch_hz_nominal"] == 50.0
     # Why: quaternion capture is forward-only, governed by the same skip logic as
     # gravity - a legacy session must lose both together, not just the first one.
     assert "quat_x" not in bundle.tables["watch"].columns
-    assert bundle.meta["has_quaternion"] is False
+    assert not bool(build_manifest([bundle]).iloc[0]["has_quaternion"])
 
 
 def test_gravity_column_present_but_entirely_null_is_dropped(tmp_path):
@@ -126,7 +126,7 @@ def test_gravity_column_present_but_entirely_null_is_dropped(tmp_path):
     ref = next(r for r in a.discover(tmp_path) if r.recording_id == "ML4SCS-S050")
     bundle = a.load(ref)
     assert "gravity_x" not in bundle.tables["watch"].columns
-    assert bundle.meta["has_gravity"] is False
+    assert not bool(build_manifest([bundle]).iloc[0]["has_gravity"])
 
 
 def test_pen_framing_sentinel_survives(tmp_path):

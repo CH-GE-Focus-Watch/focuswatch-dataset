@@ -234,21 +234,19 @@ def test_raw_accel_goes_to_its_own_table(tmp_path):
     bundle = a.load(a.discover(tmp_path)[0])
     assert "accel_total_x" in bundle.tables["watch_rawaccel"].columns
     assert "accel_total_x" not in bundle.tables["watch"].columns
-    assert bundle.meta["has_watch_rawaccel"] is True
+    assert bool(build_manifest([bundle]).iloc[0]["has_watch_rawaccel"])
 
 
 def test_head_capability_flags_are_scoped_to_the_headphone_table(tmp_path):
-    """has_head_gravity/has_head_quaternion (fix-round-1 item 2) describe the
-    headimu stream specifically, distinct from has_gravity/has_quaternion,
-    which describe watch/. Both tables carry both columns in this fixture, so
-    both flag pairs must independently come back true."""
+    """Head and watch capabilities are independently derived from their tables."""
     write_fixture(tmp_path)
     a = SensorLoggerAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
-    assert bundle.meta["has_gravity"] is True
-    assert bundle.meta["has_quaternion"] is True
-    assert bundle.meta["has_head_gravity"] is True
-    assert bundle.meta["has_head_quaternion"] is True
+    manifest = build_manifest([bundle]).iloc[0]
+    assert bool(manifest["has_gravity"])
+    assert bool(manifest["has_quaternion"])
+    assert bool(manifest["has_head_gravity"])
+    assert bool(manifest["has_head_quaternion"])
 
 
 def test_head_capability_flags_are_false_without_a_headphone_table(tmp_path):
@@ -259,8 +257,9 @@ def test_head_capability_flags_are_false_without_a_headphone_table(tmp_path):
     ref = next(r for r in a.discover(tmp_path) if r.recording_id.endswith("E3_session2"))
     bundle = a.load(ref)
     assert "headimu" not in bundle.tables
-    assert bundle.meta["has_head_gravity"] is False
-    assert bundle.meta["has_head_quaternion"] is False
+    manifest = build_manifest([bundle]).iloc[0]
+    assert not bool(manifest["has_head_gravity"])
+    assert not bool(manifest["has_head_quaternion"])
 
 
 def test_missing_raw_accel_is_reported_not_faked(tmp_path):
@@ -269,7 +268,7 @@ def test_missing_raw_accel_is_reported_not_faked(tmp_path):
     ref = next(r for r in a.discover(tmp_path) if r.recording_id.endswith("E3_session1"))
     bundle = a.load(ref)
     assert "watch_rawaccel" not in bundle.tables
-    assert bundle.meta["has_watch_rawaccel"] is False
+    assert not bool(build_manifest([bundle]).iloc[0]["has_watch_rawaccel"])
 
 
 # --- I9: participant id from session_start's payload, not the directory ---
@@ -368,10 +367,9 @@ def test_dropped_payload_key_count_is_reported(tmp_path):
 
 
 def test_generation_a_pen_events_key_is_read_not_dropped(tmp_path):
-    """C3: S3/T8/T9/T10 store strokes under `pen_events`, a key the adapter
-    used to ignore entirely (it only ever read `events`) - all four
-    recordings published has_pen=false while carrying real stroke ground
-    truth. write_fixture's generation="A" pen_events entries are 3 strokes
+    """Generation-A strokes live under `pen_events` rather than `events`.
+
+    write_fixture's generation="A" pen_events entries are 3 strokes
     (pen_down/pen_dot/pen_dot/pen_up = 4, but the 2 pen_dot rows both map to
     PEN_MOVE) plus one pen_paper_info.
     """
@@ -379,7 +377,7 @@ def test_generation_a_pen_events_key_is_read_not_dropped(tmp_path):
     a = SensorLoggerAdapter()
     ref = next(r for r in a.discover(tmp_path) if "T8" in r.recording_id)
     bundle = a.load(ref)
-    assert bundle.meta["has_pen"] is True
+    assert bool(build_manifest([bundle]).iloc[0]["has_pen"])
     pen = bundle.tables["pen"]
     assert len(pen) == 4
     assert set(pen["dot_type"]) == {"PEN_DOWN", "PEN_MOVE", "PEN_UP"}
@@ -485,7 +483,7 @@ def test_recording_without_strokes_has_no_pen_table(tmp_path):
     ref = next(r for r in a.discover(tmp_path) if "T8" in r.recording_id)
     bundle = a.load(ref)
     assert "pen" not in bundle.tables
-    assert bundle.meta["has_pen"] is False
+    assert not bool(build_manifest([bundle]).iloc[0]["has_pen"])
     assert "markers" in bundle.tables              # phase events still exist
 
 

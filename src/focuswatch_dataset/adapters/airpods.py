@@ -27,15 +27,14 @@ _RECORDING = re.compile(r"^(P\d+)_.*_labeled\.csv$")
 _GT_LINE = re.compile(r"^\s*(\d+):(\d{2})\s+(\S+)\s*$")
 _GT_DIR = "1_Data_Protocols+GroundTruth"
 
-# I13: the `*_protokoll_*.txt` block table beside each `*_ground_truth_*.txt`
+# Protocol block table beside each `*_ground_truth_*.txt`:
 # ("  1 |   0:00 |   3:00 |   3:00 | focused     | Abschreiben ...") -
 # idx | start mm:ss | end mm:ss | duration mm:ss | label | free-text activity.
 _PROTOCOL_ROW = re.compile(
     r"^\s*\d+\s*\|\s*(\d+):(\d{2})\s*\|\s*(\d+):(\d{2})\s*\|\s*\d+:\d{2}\s*\|\s*(\S+)\s*\|\s*(.+?)\s*$"
 )
-# I14: "Gesamtdauer" (total duration), stated elsewhere in the same file -
-# cross-checked when it parses, never depended on (the core tail computation
-# uses the last block's own end instead, since blocks are contiguous).
+# "Gesamtdauer" is cross-checked when available but never required; the tail
+# calculation uses the final contiguous block's end.
 _GESAMTDAUER = re.compile(r"Gesamtdauer\D*(\d+):(\d{2})")
 
 # Source states plain values (accel norm 0.0156 -> userAcceleration; gravity
@@ -109,46 +108,9 @@ class AirPodsAdapter:
             tables["attention"] = attention
 
         meta = {
-            # Why: derived from the emitted tables/columns, not asserted
-            # independently - these feed check_coverage, and a flag that
-            # drifts from the data it describes defeats the coverage matrix.
-            "has_watch": "watch" in tables,
-            "has_watch_rawaccel": "watch_rawaccel" in tables,
-            "has_headimu": "headimu" in tables,
-            "has_pen": "pen" in tables,
-            "has_markers": "markers" in tables,
-            "has_attention": "attention" in tables,
-            # Why: has_gravity/has_quaternion are the Watch-Capabilities fields
-            # (docs/DESIGN.md:306-308) and describe the watch/ stream, which
-            # this source does not have at all. Head capabilities are a
-            # separate field pair - conflating them would have every AirPods
-            # manifest row claim watch gravity for a recording with no watch.
-            "has_head_gravity": "gravity_x" in head.columns,
-            "has_head_quaternion": "quat_x" in head.columns,
-            # Why: this cohort's head gyro is its only motion signal (no
-            # watch table exists at all) - declared like the other two head
-            # capabilities so check_coverage actually requires gyro_range to
-            # have run on headimu, rather than assuming it.
-            "has_head_gyro": "gyro_x" in head.columns,
-            # Why: accel_semantics/accel_calibration and gravity_source are
-            # not symmetric here, despite both being Watch-Capabilities
-            # fields. docs/DESIGN.md:317-318 scopes accel_semantics to
-            # watch/ only as a DISAMBIGUATION rule for recordings with
-            # several accel streams; AirPods has exactly one motion stream,
-            # so there is nothing to disambiguate and it honestly describes
-            # that stream. gravity_source has no such exemption - it is
-            # has_gravity's direct companion, and has_gravity is correctly
-            # False here (no watch/ stream at all), so "measured" would
-            # openly contradict it in the same row. Derived the way
-            # ml4scs.py derives it, from the watch table's columns; this
-            # source never builds one, so it always resolves to "none" - the
-            # head stream's own gravity is carried by has_head_gravity. Do
-            # not "fix" one of these two fields into agreement with the
-            # other; they answer genuinely different questions.
             "accel_semantics": "user",
             "accel_calibration": "fused",
-            "gravity_source": "measured" if "gravity_x" in tables.get("watch", pd.DataFrame()).columns
-                              else "none",
+            "gravity_source": "none",
             # Why: the export states no nominal head rate anywhere (no rate
             # column, no fixed-Hz claim in the corpus docs) and the measured
             # rate itself varies recording to recording - declaring a nominal
@@ -159,7 +121,7 @@ class AirPodsAdapter:
             # watch_hz_measured), so a value asserted here would only ever be
             # dead weight at best or a silently-overridden lie at worst.
             "head_hz_nominal": None,
-            # Why (C2): the attention intervals are anchored to this same
+            # Attention intervals are anchored to this same
             # head-IMU sample clock (_attention's t0 = t_ns.min(), verified
             # against the source's own per-sample label column by
             # _verify_expansion before that column is dropped) - so both
@@ -168,7 +130,7 @@ class AirPodsAdapter:
             "time_domain_by_modality": {
                 "headimu": "device_wall_clock", "attention": "device_wall_clock",
             },
-            # Why (item 1, fix round C): src_sensor_timestamp_s is
+            # src_sensor_timestamp_s is
             # CMDeviceMotion's own free-running clock (seconds since device
             # boot - see _load's comment on the column), never reset to a
             # wall-clock epoch. headimu's canonical t_ns axis (from
@@ -188,7 +150,7 @@ class AirPodsAdapter:
             # check rather than asserting a guessed value (see validate.py's
             # spill_guard skip-when-absent path).
             "session_start_ns": None,
-            # Why (I14): internal-only (manifest._INTERNAL_META_KEYS) -
+            # Internal-only (manifest._INTERNAL_META_KEYS):
             # surfaced as a validate.py Finding (attention_protocol_tail),
             # not a manifest column; the measured value is the point, and it
             # never gates a build (P14's +44.55 s is a real recording).
@@ -238,7 +200,7 @@ class AirPodsAdapter:
     @staticmethod
     def _resolve_blocks(gt_dir: Path, pid: str, intervals: list[tuple[float, str]],
                         t_ns: np.ndarray) -> tuple[list[tuple[float, str, str]], float | None]:
-        """I13/I14: rows for the attention table, at protocol-block granularity.
+        """Build attention rows at protocol-block granularity.
 
         The observer's `*_ground_truth_*.txt` is the sibling `*_protokoll_*.txt`
         with adjacent same-label blocks merged - verified across all 26 pairs in
@@ -252,9 +214,9 @@ class AirPodsAdapter:
         fails loudly rather than silently preferring one. Without a protocol the
         ground-truth intervals stand as rows with an empty activity - the column
         exists either way, since a column that appears only sometimes within one
-        modality is the schema drift I15 fixes elsewhere.
+        modality must retain its canonical column set.
 
-        The tail (I14) is reported, never enforced. Measured across the 25
+        The tail is reported, never enforced. Measured across the 25
         recordings it runs -0.47 s to +44.55 s, 18 of them within a second: the
         negatives are sub-second, the stream ending a fraction before the
         protocol's nominal end rather than starting late. P14's +44.55 s is a

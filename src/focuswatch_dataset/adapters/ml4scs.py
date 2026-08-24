@@ -64,23 +64,17 @@ class Ml4scsAdapter:
 
         meta = {
             "watch_hz_nominal": 50.0 if str(row.get("watch_profile")) == "50hz" else 100.0,
-            "has_gravity": "gravity_x" in watch.columns,
-            "has_quaternion": "quat_x" in watch.columns,
             "accel_semantics": "user",
             "accel_calibration": "fused",
             "gravity_source": "measured" if "gravity_x" in watch.columns else "none",
-            # Why (C2): watch samples are timestamped from the watch's own
-            # capture clock (`ts`, see _watch below); pen and markers come
-            # from `local_ts_ms`/`timestamp_ms` - both the SERVER clock, a
-            # different clock entirely. Declaring one flat time_domain for
-            # the whole recording (the pre-fix bug) silently mislabels pen
-            # and marker timestamps as if they shared the watch's clock.
+            # Watch `ts` uses the capture clock; pen and marker timestamps use
+            # the server clock, so their domains must be declared separately.
             "time_domain_by_modality": {
                 "watch": "watch_capture_clock",
                 "pen": "server_wall_clock",
                 "markers": "server_wall_clock",
             },
-            # Why (item 1, fix round C): the modality defaults above are each
+            # The modality defaults above are each
             # the PRIMARY t_ns axis's clock; these provenance columns are
             # provably not on it. src_local_ts_ms/src_server_received_ms are
             # both server-stamped (see _watch's comment on `ts` vs.
@@ -154,12 +148,9 @@ class Ml4scsAdapter:
             "x": raw["x"].astype(float), "y": raw["y"].astype(float),
             "pressure": raw["pressure"].astype(float),
             "tilt_x": raw["tilt_x"].astype(float), "tilt_y": raw["tilt_y"].astype(float),
-            # Why (I15): float64 across every cohort - see the note in
-            # sensorlogger._from_session_json. Millisecond magnitudes are exact
-            # in float64, so nothing is lost by not publishing this as int64 in
-            # the cohorts that happen to have it.
+            # float64 keeps a stable cross-cohort dtype; millisecond values are exact.
             "src_timestamp": raw["timestamp"].astype(float),
-            # Why (I15): no session-relative offset exists for this cohort - its
+            # No session-relative offset exists for this cohort; its
             # recordings are not web-app sessions - but one modality carries one
             # column set, so the column is present and empty rather than absent.
             "src_t_session_ms": np.nan,
@@ -170,16 +161,9 @@ class Ml4scsAdapter:
         raw = pd.read_csv(path)
         out = raw.rename(columns={"timestamp_ms": "_ms"})
         out["t_ns"] = to_unix_ns(out.pop("_ms").to_numpy(), "ms")
-        # Why (I15): float64 with NaN = "not applicable" is the encoding both
-        # ETH adapters now also use for this column - an explicit cast makes
-        # that a structural fact of this column rather than an accident of
-        # whether a given CSV happens to contain a blank cell.
+        # float64 with NaN consistently encodes an inapplicable task index.
         out["task_index"] = out["task_index"].astype("float64")
-        # Why (I15): this cohort's marker CSV carries no source payload and no
-        # session-relative offset, but one modality must present one column set
-        # - a reuser concatenating the cohorts otherwise gets a ragged frame,
-        # and the package descriptor cannot state a single schema for markers.
-        # Present and empty, not absent.
+        # Empty provenance columns preserve one marker schema across cohorts.
         out["src_payload"] = ""
         out["src_t_session_ms"] = np.nan
         cols = ["t_ns", "event", "task_id", "task_name", "task_index", "task_category",

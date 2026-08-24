@@ -202,34 +202,16 @@ def _table_span(df: pd.DataFrame) -> tuple[int, int] | None:
 
 @dataclass(frozen=True)
 class Dropout:
-    """A motion modality whose stream covers only a sliver of the recording (C4).
-
-    Not a defect to hide: the sensor genuinely disconnected early (or never
-    connected) and the samples that exist are real - see
-    ETH-SL-E3_session1's headimu (58 samples spanning 2.1 s inside an
-    8713.6 s recording). Declaring it exempts the modality from checks that
-    need a substantial span to mean anything (cross-modality overlap, and
-    the physics checks whose minimum-sample floors a sliver cannot clear)
-    without deleting the samples or hiding that it happened - see
-    detect_dropouts, validate_recording's streams_overlap exclusion, and
-    check_coverage's capability-check exemption.
-    """
+    """A genuine short motion stream, exempt only from span-dependent checks."""
     modality: str
     n_samples: int
     coverage_ratio: float
 
 
 def detect_dropouts(tables: dict[str, pd.DataFrame]) -> dict[str, Dropout]:
-    """Motion modalities (schema.MOTION_MODALITIES) below the coverage floor.
+    """Find motion streams below the coverage floor using motion spans only.
 
-    The reference span is the enclosing span across the OTHER motion
-    modalities only, not every table in the recording - pen/markers/
-    attention timestamps can be wildly misaligned exactly when a merge is
-    genuinely broken (the streams_overlap failure this function must not
-    quietly absorb), and letting one of those inflate the denominator would
-    misclassify an ordinary motion table as a "dropout" instead of surfacing
-    the real alignment failure. Needs at least two motion modalities to
-    compare - with only one, there is nothing to be a sliver relative to.
+    Pen, marker, and attention clocks are excluded so misalignment cannot hide.
     """
     motion_spans = {m: s for m, s in
                     ((m, _table_span(tables[m])) for m in S.MOTION_MODALITIES if m in tables) if s}
@@ -263,7 +245,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
         add("time_magnitude", modality, lo,
             "timestamps on the declared wall clock", _EPOCH_NS_MIN <= lo <= _EPOCH_NS_MAX)
 
-    # C4: a declared dropout (schema.DROPOUT_COVERAGE_RATIO_MIN) is exempt
+    # A declared dropout (schema.DROPOUT_COVERAGE_RATIO_MIN) is exempt
     # from the overlap requirement - a sensor that disconnected 2 s into an
     # 8713.6 s recording was never going to overlap the rest, and that is
     # the dropout, not a second failure to report. Still gets its own
@@ -294,7 +276,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
                 f"no sample more than {S.SPILL_GUARD_S} s before session start",
                 lag_s <= S.SPILL_GUARD_S)
 
-    # C5: informational, always passed - the count itself is the point. An
+    # Informational, always passed: the count itself is the point. An
     # unknown payload key is dropped before publication (schema.py's
     # MARKER_PAYLOAD_ALLOWED_KEYS), not published; this Finding is how many
     # were dropped, so a future export's new field is visible in
@@ -305,7 +287,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
             "payload keys outside schema.MARKER_PAYLOAD_ALLOWED_KEYS are dropped before "
             "publication, not silently kept", True)
 
-    # I14: the observer timeline is checkable. The attention intervals are
+    # The observer timeline is checkable. The attention intervals are
     # constructed anchored to headimu's own first/last sample (airpods.py's
     # _attention), so this should always hold by construction - it is a
     # cross-modality structural invariant worth checking directly, not an
@@ -316,7 +298,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
         add("attention_within_headimu_range", "attention", f"[{a_lo}, {a_hi}]",
             f"inside headimu range [{h_lo}, {h_hi}]", h_lo <= a_lo and a_hi <= h_hi)
 
-    # I14: reports a quantity rather than gating one, so it always passes -
+    # Reports a quantity rather than gating one, so it always passes:
     # P14's +44 s is a real recording and must not fail a strict build. The
     # tail is computed by airpods.py (it alone has the parsed protocol total)
     # and passed through meta, the same pattern as session_start_ns.
@@ -326,7 +308,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
             "recording length minus the protocol's declared Gesamtdauer - measured "
             "-0.47 s to +44.55 s across the 25 recordings, 18 within +/-1 s", True)
 
-    # I6: accel_semantics must agree with which acceleration columns the
+    # accel_semantics must agree with which acceleration columns the
     # motion table actually carries - "total" implies accel_total_*, "user"
     # implies accel_user_*. Checked against watch when present, else headimu
     # (AirPods' only motion stream) - the same modality accel_semantics
@@ -398,7 +380,7 @@ _CAPABILITY_CHECKS = (
 
 def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
                    dropouts: dict[str, dict[str, Dropout]] | None = None) -> list[str]:
-    """`dropouts`: recording_id -> detect_dropouts(bundle.tables) (C4).
+    """`dropouts`: recording_id -> detect_dropouts(bundle.tables).
 
     Optional and keyed by recording_id, not derived from `manifest` here -
     `manifest` alone cannot recompute it (that needs the tables, which this
@@ -440,7 +422,7 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
         for flag, check in _CAPABILITY_CHECKS:
             if row.get(flag):
                 modality = S.CAPABILITY_FLAG_MODALITY[flag]
-                # Why (C4): a declared dropout's physics checks need a
+                # A declared dropout's physics checks need a
                 # sample count no sliver can clear (quat_norm's explicit
                 # 100-sample floor today; the principle generalises to
                 # gravity_norm/gyro_range) - the narrow, "minimum-length"

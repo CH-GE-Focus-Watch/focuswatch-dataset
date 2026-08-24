@@ -1,24 +1,7 @@
-"""Optional removal of pen coordinates.
+"""Optional, reversible removal of pen coordinates.
 
-Stroke geometry reconstructs the written text. Structured tasks have prescribed
-content; free-writing blocks do not. The policy runs on the canonical pen table
-so it covers every source, and it blanks values rather than dropping rows.
-
-`x`/`y` are the only channel carrying spatial shape, so blanking them rules
-out literal glyph reconstruction. `pressure`, `tilt_x`, `tilt_y`, `dot_type`
-and the full nanosecond `t_ns` survive untouched - enough to derive stroke
-count, per-stroke duration (each PEN_DOWN -> PEN_UP interval), inter-stroke
-pause structure, tempo, and a pressure/tilt signature. That supports
-behavioural inference and potentially re-identification, not reading what
-was written. The policy names say "xy", not "content" or "anonymised" -
-read them that way before deciding whether to switch one on.
-
-Default is NONE - the dataset owner's decision is to publish full coordinates
-for now, keeping the option to obscure them later. `redact_bundle` is the seam
-a build pipeline calls to keep that choice reversible: it applies the policy
-and stamps the resulting `RecordingBundle.meta["redaction_policy"]` in the
-same call, so the published manifest (which trusts this meta key verbatim,
-see `manifest.py`) can never disagree with what was actually done to the data.
+Blanking ``x``/``y`` prevents literal glyph reconstruction but preserves timing
+and other behavioural signals. The bundle's manifest always records the policy.
 """
 from __future__ import annotations
 

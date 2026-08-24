@@ -280,13 +280,15 @@ def test_inverted_interval_fails_loudly_instead_of_publishing_malformed_data(tmp
         a.load(a.discover(tmp_path)[0])
 
 
-def test_no_watch_table_and_flags_say_so(tmp_path):
+def test_structural_flags_are_derived_from_tables(tmp_path):
     write_fixture(tmp_path)
     a = AirPodsAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
     assert "watch" not in bundle.tables
-    assert bundle.meta["has_watch"] is False
-    assert bundle.meta["has_attention"] is True
+    assert not any(key.startswith("has_") for key in bundle.meta)
+    manifest = build_manifest([bundle]).iloc[0]
+    assert not bool(manifest["has_watch"])
+    assert bool(manifest["has_attention"])
 
 
 def test_gravity_source_agrees_with_the_absent_watch_stream(tmp_path):
@@ -393,18 +395,9 @@ def test_coverage_matrix_catches_a_stale_attention_flag_beside_a_real_headimu(tm
     ref = a.discover(tmp_path)[0]
     bundle = a.load(ref)
 
-    manifest = pd.DataFrame([{
-        "recording_id": ref.recording_id,
-        "has_watch": False, "has_watch_rawaccel": False, "has_headimu": True,
-        "has_pen": False, "has_markers": False,
-        "has_attention": True,                      # stale: attention table dropped below
-        "has_head_gravity": bundle.meta["has_head_gravity"],
-        "has_head_quaternion": bundle.meta["has_head_quaternion"],
-        "has_head_gyro": bundle.meta["has_head_gyro"],
-    }])
+    manifest = build_manifest([bundle])
     findings = validate_motion_table(bundle.tables["headimu"], ref.recording_id, "headimu",
                                      bundle.meta["head_hz_nominal"])
     findings += validate_recording(ref.recording_id, {"headimu": bundle.tables["headimu"]}, bundle.meta)
     problems = check_coverage(manifest, findings)
     assert any("time_magnitude" in p and "attention" in p for p in problems)
-

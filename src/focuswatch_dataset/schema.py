@@ -35,11 +35,7 @@ UNITS: dict[Quantity, str] = {
     Quantity.QUAT: "1",
 }
 
-# Closed vocabulary for the manifest's accel_semantics field (I6). Anything
-# not a key here - an empty string, a typo, a future third value - is
-# unrecognised and validate.validate_recording must fail loudly on it rather
-# than silently skip the cross-check (see that function's
-# accel_semantics_matches_columns finding).
+# Closed vocabulary: validation rejects empty, unknown, or future values.
 ACCEL_SEMANTICS_QUANTITY: dict[str, Quantity] = {
     "total": Quantity.ACCEL_TOTAL,
     "user": Quantity.ACCEL_USER,
@@ -73,10 +69,7 @@ ATTENTION_EXPANSION_MIN_AGREEMENT = 0.99
 MODALITIES = ("watch", "watch_rawaccel", "headimu", "pen", "markers", "attention")
 DOT_TYPES = ("PEN_DOWN", "PEN_MOVE", "PEN_UP", "PEN_HOVER")
 
-# M8: the AirPods attention label vocabulary, measured across all 26
-# ground-truth files (51 `focused` intervals, 53 `distracted`) - closed now
-# that it is known, so a typo in a future observer `.txt` is caught rather
-# than silently becoming its own class.
+# Closed observer-label vocabulary; validation rejects future typos.
 ATTENTION_LABELS = ("distracted", "focused")
 
 # The three motion-table modalities a recording can carry (build.py's
@@ -84,54 +77,26 @@ ATTENTION_LABELS = ("distracted", "focused")
 # table, not two kept in agreement by memory).
 MOTION_MODALITIES = ("watch", "watch_rawaccel", "headimu")
 
-# C4: a motion modality whose own span covers less than this fraction of the
-# recording's overall span is a DROPOUT (sensor disconnected early/never
-# returned), not a genuine stream - see validate.detect_dropouts. Measured
-# case (ETH-SL-E3_session1's headimu: 58 samples over 2.1 s inside an
-# 8713.6 s recording) sits at ratio ~0.00024, two orders of magnitude below
-# this threshold. 0.01 (1%) is chosen to sit comfortably above that measured
-# floor while staying safely below the smallest legitimate partial-coverage
-# case seen in the fixtures (Ege's headimu fixture: 1490 ms inside a 29990 ms
-# recording, ratio ~0.0497) - a merely imperfect stream must never be wrongly
-# exempted from its physics checks.
+# A stream below 1% of the recording span is a dropout, not a valid partial
+# stream. The threshold separates observed disconnected streams from fixtures.
 DROPOUT_COVERAGE_RATIO_MIN = 0.01
 
-# Pen event vocabulary shared by both ETH pipelines (DESIGN §8.1). Both come
-# from the same web app but store its two export generations differently:
-# generation A (Ege's own CSV export; SensorLogger's S3/T8/T9/T10, which
-# carry it under a separate `pen_events` JSON key) samples the pen at
-# "pen_dot"; generation B (SensorLogger's E1/E2/E3, embedded in `events`)
-# samples it at "pen_move" instead. One table per generation, imported by
-# both adapters (C3), so they cannot independently drift on the mapping.
+# Shared ETH web-app event mappings. Export generation A uses `pen_dot` and
+# generation B uses `pen_move`; both adapters import these constants.
 PEN_EVENTS_GEN_A: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_dot": "PEN_MOVE", "pen_up": "PEN_UP"}
 PEN_EVENTS_GEN_B: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
-# Non-stroke pen event classes, present in both generations: neither carries
-# a position, so neither belongs in pen/ - both are routed to markers/
-# instead (DESIGN §8.1's pen_session_sync treatment, extended to
-# pen_paper_info in this fix - see C3/I8 in whole-branch-review-findings.md).
+# Non-stroke pen events have no position and belong in markers/, not pen/.
 PEN_NON_STROKE_EVENTS = ("pen_paper_info", "pen_session_sync")
 
-# Pen coordinate/pressure scale labels, keyed by EXPORT GENERATION - not by
-# which pipeline directory a recording happens to live in (C3). Generation A
-# gets one label regardless of which pipeline produced it (Ege's own export
-# and SensorLogger's S3/T8/T9/T10 are the same generation); generation B
-# (SensorLogger's E1/E2/E3) is kept distinct because whole-branch-review-
-# findings.md's open question 6 leaves whether the two generations share one
-# underlying coordinate system unconfirmed - conflating them would publish an
-# unverified equivalence as fact.
+# Coordinate and pressure labels are keyed by export generation. Their scales
+# are not known to be equivalent, so they remain distinct.
 PEN_XY_UNIT_GEN_A = "webapp_raw"
 PEN_PRESSURE_SCALE_GEN_A = "webapp_force"
 PEN_XY_UNIT_GEN_B = "sl_webapp_raw"
 PEN_PRESSURE_SCALE_GEN_B = "sl_webapp_force"
 
-# C5: the ETH web app's own event payload vocabulary, closed and reviewed -
-# see whole-branch-review-findings.md §C5. An ALLOW-list, not a deny-list: a
-# deny-list fails open (the next export adds a field and it publishes
-# unreviewed), an allow-list fails closed (a new field is dropped, and
-# counted, until someone reviews and adds it here). user_agent (browser
-# build) and screen (display geometry) are a device fingerprint; notes is
-# free text an experimenter can type anything into (measured: "S3_Sensor_
-# logger_dl-studying") - none of the three may ever reach the public bundle.
+# Payload allow-list: unknown fields are dropped and counted. Excluded browser,
+# display, and free-text fields can fingerprint a device or expose private text.
 MARKER_PAYLOAD_ALLOWED_KEYS = frozenset({
     "color", "duration_ms", "force", "from", "get_ready_ms", "ground_truth",
     "handedness", "idx", "look_down", "mode", "operator_mode", "participant_id",
@@ -141,42 +106,19 @@ MARKER_PAYLOAD_ALLOWED_KEYS = frozenset({
     "timestamp", "tip", "total_events", "total_pen_events", "x", "y",
 })
 
-# C5: handedness, promoted from a buried, unread payload field to a typed
-# manifest column. Closed vocabulary - an unrecognised value must fail loudly
-# rather than publish free text verbatim into a typed column (the same
-# payload that carries it also carries `notes`, an experimenter free-text
-# field, so nothing about this payload can be trusted to already be clean).
+# Typed handedness vocabulary; unknown payload text must not reach the manifest.
 HANDEDNESS_VALUES = ("left", "right", "unknown")
 
-# Item 1 (fix round C): time_domain vocabulary for src_-prefixed provenance
-# columns whose clock is NOT their modality's default (manifest.build_channels'
-# time_domain_by_column override, the same pattern as
-# unit_conversion_factor_by_column). Each adapter's per-modality default
-# (watch_capture_clock, server_wall_clock, backend_wall_clock,
-# device_wall_clock - declared inline in time_domain_by_modality, not
-# centralised here) names the clock the modality's PRIMARY t_ns axis is on;
-# these name the clock a specific provenance column is actually on, measured
-# against real corpus data (whole-branch-review-2.md finding 1):
-# pen.src_timestamp published 749-923 days off its modality's declared
-# clock. Centralised (not restated per adapter) because more than one
-# adapter's provenance columns are the identical physical thing under the
-# identical name.
+# Provenance columns may use a clock other than their table's canonical t_ns
+# axis. These shared values are applied through time_domain_by_column.
 TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"
 # Why: not a clock reading at all - milliseconds SINCE session start, so no
 # wall-clock name would be honest. Emitted by every adapter that carries
 # `src_t_session_ms` (ML4SCS pen/markers, both ETH pipelines).
 TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS = "session_relative_offset_ms"
 TIME_DOMAIN_PHONE_WALL_CLOCK = "phone_wall_clock"
-# Why there is no "not_a_clock" term: the field answers two questions, one per
-# kind of column. A TIME-VALUED column declares the clock its own values are
-# expressed in; every other column declares the clock its ROW is stamped on,
-# which is the modality default. Under that rule a sequence counter is stamped
-# on the watch clock exactly like the accelerometer sample beside it, and needs
-# no term of its own - what it holds is already stated by `quantity` and `unit`.
-# Why: AirPods' src_sensor_timestamp_s is CMDeviceMotion's free-running
-# uptime clock (seconds since device boot), never reset to wall-clock epoch -
-# distinct from device_wall_clock, which headimu/attention's canonical t_ns
-# axis (from timestamp_iso) is actually on.
+# Time-valued provenance columns name their own clock; other columns inherit
+# their row's modality clock. AirPods sensor timestamps are device uptime.
 TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK = "device_monotonic_clock"
 
 # Which modality's Finding stream a manifest capability flag gates. The single

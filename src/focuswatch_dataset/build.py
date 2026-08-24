@@ -1,38 +1,7 @@
-"""Orchestration: discover, load, validate, write, describe.
+"""Discover, validate, and atomically publish a complete dataset bundle.
 
-Fail-loud choice: any single recording that cannot be discovered or loaded
-aborts the *entire* build (the exception propagates, wrapped with which
-source/recording it came from). A strict build that finds a physical-check
-failure or a coverage gap behaves the same way: it writes only
-`validation_report.json` directly into `out` (the diagnostic, not a
-publishable artefact) and raises. The alternative - drop the offending
-recording and publish the rest - was rejected: a 66-of-67 bundle looks
-exactly like a complete one from the outside, and the missing recording
-would only surface if someone thought to check the count against the
-corpus manifest kept elsewhere. Loud and total beats quiet and partial.
-
-That guarantee has to survive `out` already existing, not just a fresh
-directory: a rebuild with a shrunk or corrected corpus must not leave a
-stale `<modality>/<old_id>.parquet` behind (check_manifest_consistency would
-catch the mismatch, but only after the new build's own files are already on
-disk next to it), and a crash mid-write must not leave a partial manifest.
-Both are solved the same way - every publishable artefact is written into a
-sibling staging directory first and the whole thing is promoted into `out`
-with two directory renames (`out` -> a throwaway backup name, staging ->
-`out`) only once every write has succeeded. `out` itself is never
-simultaneously absent and half-populated, and staging never survives a
-failure: the promotion call sits inside the same try/except as the writes
-that precede it, so a failure during promotion (not just during writing)
-still triggers the staging cleanup - a leaked `.<out>.build-*` sibling
-would otherwise be the accumulating mess this design exists to prevent. The
-two renames stay on one filesystem because the staging directory and the
-backup name are both created next to `out`, not in the system temp
-directory. If a previous promotion was itself interrupted (process killed
-between the two renames), its `.<out>.build-*`/`.<out>.replaced-*` leftovers
-are announced at the start of the next build, never auto-recovered or
-deleted - `out` was already left correct by that interruption (see
-`_promote`'s docstring), so the only gain left is making the leftovers easy
-to find.
+Any recording or validation failure aborts the build. Artifacts are staged next
+to the destination and promoted only after every write succeeds.
 """
 from __future__ import annotations
 
@@ -65,7 +34,7 @@ _PRIOR_BUILD_SIGNATURE = ("sessions.parquet", "datapackage.json")
 def _git_sha() -> str:
     """The SHA of this PACKAGE's own checkout, not whatever the caller's cwd is.
 
-    I11: no `cwd` meant `git rev-parse HEAD` ran against the caller's working
+    A missing `cwd` would make `git rev-parse HEAD` run against the caller's working
     directory - "not a git repository" for an unrelated cwd, or a foreign
     repo's SHA for an unrelated one. `-dirty` records uncommitted changes,
     which a bare SHA would otherwise claim as clean. Never an empty string: a
@@ -286,7 +255,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         bundles.append(bundle)
 
     manifest_preview = build_manifest(bundles, dropouts)
-    # Why (C4): computed once per bundle here, passed explicitly rather than
+    # Computed once per bundle and passed explicitly rather than
     # re-derived inside check_coverage (which never receives bundle.tables) -
     # the exact same computation manifest.build_manifest already ran to
     # populate issue_codes, so the two can never disagree about which
@@ -300,7 +269,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     # file, so a mismatch there would silently under-report a real problem).
     final_report = _report_with_gaps(report, gaps)
     if strict and (report.failed or gaps):
-        # Why (I2): this used to write straight into `out`, before staging
+        # Staging avoids writing straight into `out` before validation.
         # ever engages - into a pre-existing good build that overwrote its
         # report with failures describing different data; into a fresh
         # --out it left a bare validation_report.json that

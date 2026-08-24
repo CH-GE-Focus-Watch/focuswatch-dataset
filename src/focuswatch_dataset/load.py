@@ -1,11 +1,4 @@
-"""Reader API for a published bundle.
-
-Every other module in this package serves the people who built the dataset;
-this one serves the people using it - a reuser who downloads the archive and
-has never seen `docs/DESIGN.md`. Errors here name the fact and where to look
-it up (`recording X has no watch table (has_watch is false)`), not a bare
-`FileNotFoundError` on a path nobody outside this repo would recognise.
-"""
+"""Reader API for published bundles with user-facing missing-table errors."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"report failed: could not read bundle at {dataset}: {exc}")
         return 1
-    # Why (item 4, fix round C): "participant_id" is namespaced per cohort, so
+    # participant_id is namespaced per cohort, so
     # this count would be unchanged if all three cohorts had recorded the same
     # people - "participants" hands a citing paper an N the data cannot
     # support. Matches the README wording (docs.write_readme), which commit

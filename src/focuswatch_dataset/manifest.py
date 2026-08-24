@@ -1,45 +1,8 @@
-"""The manifest is the single source of truth for capability flags.
+"""Build the manifest from tables and classified adapter metadata.
 
-Parquet key-value metadata and any downstream descriptor are generated from
-it; nothing else is maintained independently.
-
-Three guarantees this module exists to provide:
-
-1. Capability flags cannot silently drop out of the built manifest. The
-   modality/gravity/quaternion/gyro booleans that `check_coverage` gates on
-   are recomputed here directly from `bundle.tables` column presence -
-   never merely trusted from an adapter's own `meta` dict, which could in
-   principle disagree with the data it describes. Which flags these are,
-   which table each looks in, and which complete vector each looks for comes
-   from `schema.CAPABILITY_FLAG_MODALITY`/`schema.CAPABILITY_FLAG_COLUMNS`, the
-   same tables `validate.check_coverage` reads its modality bindings from -
-   so a flag `check_coverage` starts gating on can never silently fall out
-   of sync with what this module derives from the tables (see
-   `_DERIVED_FIELDS` and the structural-flag loop in `build_manifest`,
-   which needs no per-flag line of its own). The two measured-rate fields
-   (`watch_hz_measured`, `head_hz_measured`) get the identical exclusion
-   treatment for the identical reason, even though they are not booleans
-   and so are not part of the shared flag tables.
-2. Every `bundle.meta` key is either published (`MANIFEST_COLUMNS`),
-   deliberately kept internal (`_INTERNAL_META_KEYS`, e.g. the
-   spill-guard-only `session_start_ns`), or fails the build loudly. A
-   hand-maintained column list can drift from the adapters that actually
-   populate it; the old failure mode of that drift was `df[list(
-   MANIFEST_COLUMNS)]` silently dropping an unlisted key (this project's
-   own `has_head_gyro` very nearly shipped that way). The fix is not to
-   swing the other way and publish every unknown key unexamined either -
-   that would leak internal-only bookkeeping (a spill-guard timestamp with
-   no declared unit or purpose) into the published dataset. Only a
-   classified key gets through, one way or the other; an unclassified one
-   raises.
-3. Optional numeric fields (`watch_hz_nominal`, `head_hz_nominal`,
-   `n_writing_tasks`, `n_idle_tasks`) survive the round trip through a
-   `pandas.DataFrame`. A `None` in an all-numeric column becomes `NaN` on
-   the way out, and `NaN` is truthy in Python - a naive `if nominal_hz:`
-   downstream would treat "not applicable" as if a real value divided into
-   it. `check_manifest_consistency` and every accessor in this module read
-   those fields with `pandas.notna`, and `validate.validate_motion_table`
-   was fixed to do the same (see that module's history).
+Structural flags and measured rates are derived centrally. Adapter metadata is
+either published, explicitly internal, or rejected; optional numeric values use
+``pandas.notna`` so DataFrame ``NaN`` remains "not applicable".
 """
 from __future__ import annotations
 
@@ -92,11 +55,11 @@ TABLE_DERIVED_MANIFEST_COLUMNS = (
 _INTERNAL_META_KEYS = frozenset({
     "session_start_ns", "src_standardisation",
     "time_domain_by_modality", "time_domain_by_column", "unit_conversion_factor_by_column",
-    # Why (C5): a diagnostic count, not a bundle fact - surfaced as a
+    # A diagnostic count, not a bundle fact: surfaced as a
     # validate.py Finding (payload_keys_redacted) in validation_report.json,
     # not as a sessions.parquet column.
     "src_payload_dropped_key_count",
-    # Why (I14): likewise a diagnostic, not a bundle fact - surfaced as a
+    # Likewise a diagnostic, not a bundle fact: surfaced as a
     # validate.py Finding (attention_protocol_tail), which reports the
     # measured value and never gates a build.
     "attention_protocol_tail_s",
@@ -119,7 +82,7 @@ _DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
 # an adapter - excluding them here is what keeps a recording-level restatement
 # from ever being able to drift from the per-modality source of truth.
 _DERIVED_TIME_FIELDS = frozenset({"time_domain", "alignment_note"})
-# Why (C4): computed from detect_dropouts(bundle.tables), not declared by an
+# Computed from detect_dropouts(bundle.tables), not declared by an
 # adapter - no adapter has (or should have) an opinion on its own coverage
 # ratio, so this is purely defensive against a future one trying to.
 _DERIVED_ISSUE_FIELDS = frozenset({"issue_codes"})
@@ -202,7 +165,7 @@ def _primary_time_domain(by_modality: dict[str, str]) -> str:
 
 
 def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary: str) -> str:
-    """Explicit warning for every estimated_delta recording (C2).
+    """Return an explicit warning for every estimated-delta recording.
 
     Computed from time_domain_by_modality, not hand-written per adapter: a
     modality whose declared clock differs from the primary one is named here
@@ -296,7 +259,7 @@ def build_manifest(
             if k not in _DERIVED_FIELDS and k not in _INTERNAL_META_KEYS
         })
 
-        # time_domain / alignment_note (C2): derived from
+        # time_domain / alignment_note are derived from
         # time_domain_by_modality, computed after the meta merge above so
         # row["time_alignment"] (an ordinary declared field, unaffected by
         # this fix) is already in place.
@@ -339,7 +302,7 @@ CHANNEL_COLUMNS = (
 # `unit` cell for these stays the closed-vocabulary "device_native" - the
 # per-recording scale label lives ONLY in the manifest
 # (pen_xy_unit/pen_pressure_scale), read from meta[meta_key] there. Item 2
-# (fix round C): this used to leak the per-recording label INTO the `unit`
+# The per-recording label must not leak into the `unit`
 # cell too (`meta.get(meta_key) or "device_native"`), which put six
 # undefined values (ncode_grid, moleskine_raw, webapp_raw, webapp_force,
 # sl_webapp_raw, sl_webapp_force) into channels.parquet's supposedly
@@ -374,7 +337,7 @@ _KNOWN_METADATA_COLUMNS: dict[str, tuple[str, str]] = {
     "tilt_x": ("device_native", "pen_tilt"),
     "tilt_y": ("device_native", "pen_tilt"),
     "label": ("category", "attention_state"),
-    # Why (I13): free text (the observer's own activity description, e.g.
+    # Free text (the observer's own activity description, e.g.
     # "Loesen von Matheaufgaben"), not a closed enumerated set - "category"
     # would misdescribe it the way it correctly describes `label` above.
     "activity": ("n/a", "observer_activity"),
@@ -435,11 +398,11 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
     rows = []
     for b in bundles:
         by_modality = b.meta.get("time_domain_by_modality", {})
-        # Why (item 1, fix round C): a modality's declared time_domain is the
+        # A modality's declared time_domain is the
         # clock its PRIMARY t_ns axis is on, not necessarily the clock every
         # src_-prefixed provenance column is on - measured on the real corpus,
         # ML4SCS's pen.src_timestamp published 749-923 days off the
-        # modality's declared clock (whole-branch-review-2.md finding 1). Same
+        # modality's declared clock. Same
         # pattern as unit_conversion_factor_by_column: the adapter that
         # produced the column states its domain at the point it produced it;
         # this overrides the modality default ONLY where an adapter declared
@@ -448,7 +411,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
         column_domains = b.meta.get("time_domain_by_column", {})
         factors = b.meta.get("unit_conversion_factor_by_column", {})
         for modality, df in b.tables.items():
-            # Why (C2): time_domain is per-modality, not restated once for the
+            # time_domain is per-modality, not restated once for the
             # whole recording - a missing OR blank entry is an adapter bug (an
             # emitted table with no declared clock), not a case to paper over
             # with a blank cell the way _describe_column refuses to for
@@ -462,7 +425,7 @@ def build_channels(bundles: list[RecordingBundle]) -> pd.DataFrame:
             modality_domain = by_modality[modality]
             for column in df.columns:
                 descriptor = table_column_descriptor_values(df, column, b.meta)
-                # Why (C1): the factor actually applied, per (modality, column) -
+                # The factor actually applied, per (modality, column),
                 # not restated as a fixed 1.0 beside an adapter that may have
                 # divided by G_TO_MS2. Absent from the map means the adapter
                 # applied no conversion to that column, which is 1.0 truthfully.
