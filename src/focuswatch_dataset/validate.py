@@ -533,7 +533,11 @@ def _same_archive_value(observed: object, expected: object) -> bool:
     if pd.isna(observed) and pd.isna(expected):
         return True
     if isinstance(observed, (float, np.floating)) or isinstance(expected, (float, np.floating)):
-        return bool(np.isclose(observed, expected, equal_nan=True))
+        # Archive summaries are deliberately rounded before publication, so a
+        # relative tolerance would grow with the value and let a changed
+        # duration/rate through (e.g. 8713.6 -> 8713.65). Keep only enough
+        # absolute room for binary floating-point round trips.
+        return bool(np.isclose(observed, expected, rtol=0.0, atol=1e-12, equal_nan=True))
     return bool(observed == expected)
 
 

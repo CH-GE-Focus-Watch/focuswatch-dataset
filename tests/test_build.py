@@ -286,6 +286,29 @@ def test_cli_validate_recomputes_table_derived_manifest_values(tmp_path):
         assert main(["validate", "--dataset", str(out)]) == 1, column
 
 
+def test_cli_validate_rejects_small_published_float_changes(tmp_path):
+    """Rounded archive summaries must not accept nearby tampered float values."""
+    out = tmp_path / "out"
+    src = sources(tmp_path)
+    build_dataset(src, out)
+    manifest = load_manifest(out)
+    # The fixture's 619.96 s duration uses the same near-value mutation as
+    # 8713.6 -> 8713.65: both fall inside numpy.isclose's default relative band.
+    duration_row = manifest.index[manifest["recording_id"] == "AIRPODS-P1"][0]
+    manifest.loc[duration_row, "duration_s"] = 619.965
+    manifest.to_parquet(out / "sessions.parquet", index=False)
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+    build_dataset(src, out)
+    channels = pd.read_parquet(out / "channels.parquet")
+    # The fixture's 100 Hz stream exercises the same relative-tolerance bug
+    # as 50 -> 50.0004.
+    rate_row = channels.index[channels["sample_rate_hz"] == 100][0]
+    channels.loc[rate_row, "sample_rate_hz"] = 100.0004
+    channels.to_parquet(out / "channels.parquet", index=False)
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
 def test_cli_validate_rejects_orphan_modality_tables(tmp_path):
     """Every archived modality file must have exactly one declared manifest key."""
     out = tmp_path / "out"
