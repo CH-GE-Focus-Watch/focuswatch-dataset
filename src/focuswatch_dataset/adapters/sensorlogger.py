@@ -27,12 +27,11 @@ COHORT = "ETH-SL"
 _WRIST_SENSOR_NAME = "Wrist Motion"
 
 
-def _standardisation(meta_path: Path) -> bool:
-    meta = pd.read_csv(meta_path)
+def _standardisation(meta: pd.DataFrame) -> bool:
     return str(meta["standardisation"].iloc[0]).strip().lower() == "true"
 
 
-def _watch_hz_nominal(meta_path: Path) -> float | None:
+def _watch_hz_nominal(meta: pd.DataFrame) -> float | None:
     """Nominal wrist rate from Metadata.csv's two parallel pipe-lists.
 
     `sensors` and `sampleRateMs` are indexed the same way (stream name to its
@@ -40,7 +39,6 @@ def _watch_hz_nominal(meta_path: Path) -> float | None:
     the Wrist Motion entry is missing, blank or unparseable, no nominal rate
     is declared and the validator falls back to the measured rate.
     """
-    meta = pd.read_csv(meta_path)
     sensors = str(meta.get("sensors", pd.Series([""])).iloc[0]).split("|")
     rates = str(meta.get("sampleRateMs", pd.Series([""])).iloc[0]).split("|")
     if _WRIST_SENSOR_NAME not in sensors:
@@ -112,7 +110,8 @@ class SensorLoggerAdapter:
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
         d = ref.path
-        si = _standardisation(d / "Metadata.csv")
+        metadata = pd.read_csv(d / "Metadata.csv")
+        si = _standardisation(metadata)
         # Why: standardisation on means the source already wrote SI units, so
         # dividing by G_TO_MS2 harmonises back to g; off means it is already g.
         accel_factor = 1.0 / S.G_TO_MS2 if si else 1.0
@@ -145,7 +144,7 @@ class SensorLoggerAdapter:
             tables["markers"] = markers
 
         meta = {
-            "watch_hz_nominal": _watch_hz_nominal(d / "Metadata.csv"),
+            "watch_hz_nominal": _watch_hz_nominal(metadata),
             "has_gravity": "gravity_x" in tables["watch"].columns,
             "has_quaternion": "quat_x" in tables["watch"].columns,
             # Why: the Head-Capabilities pair, kept distinct from the
@@ -191,7 +190,7 @@ class SensorLoggerAdapter:
                 S.PEN_PRESSURE_SCALE_GEN_A if generation == "A" else S.PEN_PRESSURE_SCALE_GEN_B),
             "src_standardisation": si,
             "unit_conversion_factor_by_column": column_factors,
-            "session_start_ns": self._session_start_ns(d / "Metadata.csv"),
+            "session_start_ns": self._session_start_ns(metadata),
             # Why (C5): promoted from a buried, unread payload field to a
             # typed manifest column - nothing read it while watch_wrist_side
             # published "unknown" for all 9 ETH recordings even though the
@@ -206,8 +205,8 @@ class SensorLoggerAdapter:
         return RecordingBundle(ref, tables, meta)
 
     @staticmethod
-    def _session_start_ns(meta_path: Path) -> int | None:
-        epoch_ms = pd.read_csv(meta_path)["recording epoch time"].iloc[0]
+    def _session_start_ns(meta: pd.DataFrame) -> int | None:
+        epoch_ms = meta["recording epoch time"].iloc[0]
         return int(epoch_ms) * 1_000_000 if pd.notna(epoch_ms) else None
 
     def _motion(self, path: Path, accel_factor: float) -> tuple[pd.DataFrame, dict[str, float]]:

@@ -48,7 +48,7 @@ def test_build_refuses_duplicate_recording_ids_before_writing(tmp_path, monkeypa
     duplicate = RecordingBundle(
         RecordingRef("ML4SCS-S001", "P", "ML4SCS", "ml4scs", Path(".")), {}, {}
     )
-    monkeypatch.setattr(build_mod, "_load_bundle", lambda name, root: [duplicate, duplicate])
+    monkeypatch.setattr(build_mod, "_load_bundle", lambda name, root, sha: [duplicate, duplicate])
 
     with pytest.raises(RuntimeError, match="duplicate recording_id"):
         build_dataset({"ml4scs": tmp_path}, tmp_path / "out")
@@ -79,6 +79,26 @@ def test_build_is_deterministic(tmp_path):
     for f in sorted(p.relative_to(a) for p in a.rglob("*.parquet")):
         assert hashlib.sha256((a / f).read_bytes()).hexdigest() == \
                hashlib.sha256((b / f).read_bytes()).hexdigest(), f
+
+
+def test_build_reads_git_provenance_once(tmp_path, monkeypatch):
+    """Every published row receives the one provenance fact for this build."""
+    import focuswatch_dataset.build as build_mod
+
+    calls = 0
+
+    def sha():
+        nonlocal calls
+        calls += 1
+        return "test-build-sha"
+
+    monkeypatch.setattr(build_mod, "_git_sha", sha)
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+
+    manifest = load_manifest(out)
+    assert set(manifest["build_git_sha"]) == {"test-build-sha"}
+    assert calls == 1
 
 
 def test_validation_report_is_written_and_all_checks_pass(tmp_path):

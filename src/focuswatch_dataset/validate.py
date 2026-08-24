@@ -249,7 +249,8 @@ def detect_dropouts(tables: dict[str, pd.DataFrame]) -> dict[str, Dropout]:
 
 
 def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
-                       meta: dict) -> list[Finding]:
+                       meta: dict,
+                       dropouts: dict[str, Dropout] | None = None) -> list[Finding]:
     """Checks that only make sense across the tables of one recording."""
     out: list[Finding] = []
 
@@ -268,7 +269,8 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
     # the dropout, not a second failure to report. Still gets its own
     # informational Finding (never omitted, per DESIGN's "publish with the
     # truth attached") so the fact is visible without failing the build.
-    dropouts = detect_dropouts(tables)
+    if dropouts is None:
+        dropouts = detect_dropouts(tables)
     overlap_spans = {m: s for m, s in spans.items() if m not in dropouts}
     if len(overlap_spans) > 1:
         latest_start = max(lo for lo, _ in overlap_spans.values())
@@ -464,7 +466,8 @@ def check_coverage(manifest: pd.DataFrame, findings: list[Finding],
     return problems
 
 
-def validate_bundle(bundle: RecordingBundle) -> list[Finding]:
+def validate_bundle(bundle: RecordingBundle,
+                    dropouts: dict[str, Dropout] | None = None) -> list[Finding]:
     """Run every validation check applicable to a bundle's tables and metadata."""
     findings: list[Finding] = []
     for modality in S.MOTION_MODALITIES:
@@ -478,7 +481,9 @@ def validate_bundle(bundle: RecordingBundle) -> list[Finding]:
         findings += validate_pen_table(bundle.tables["pen"], bundle.ref.recording_id)
     if "attention" in bundle.tables:
         findings += validate_attention_table(bundle.tables["attention"], bundle.ref.recording_id)
-    return findings + validate_recording(bundle.ref.recording_id, bundle.tables, bundle.meta)
+    return findings + validate_recording(
+        bundle.ref.recording_id, bundle.tables, bundle.meta, dropouts,
+    )
 
 
 def _archive_meta(row: pd.Series) -> dict[str, object]:
@@ -668,7 +673,8 @@ def validate_dataset(root: Path | str) -> ValidationReport:
     bundles = [_archive_bundle(row, root) for _, row in manifest.iterrows()]
     dropouts: dict[str, dict[str, Dropout]] = {}
     for bundle in bundles:
-        expected_manifest = table_derived_manifest_values(bundle)
+        bundle_dropouts = detect_dropouts(bundle.tables)
+        expected_manifest = table_derived_manifest_values(bundle, bundle_dropouts)
         for column in TABLE_DERIVED_MANIFEST_COLUMNS:
             observed = bundle.meta[column]
             if not _same_archive_value(observed, expected_manifest[column]):
@@ -677,8 +683,8 @@ def validate_dataset(root: Path | str) -> ValidationReport:
                     f"expected {expected_manifest[column]!r} from stored tables"
                 )
         _validate_archive_descriptors(bundle, channels, table_column_descriptor_values)
-        report.findings += validate_bundle(bundle)
-        dropouts[bundle.ref.recording_id] = detect_dropouts(bundle.tables)
+        report.findings += validate_bundle(bundle, bundle_dropouts)
+        dropouts[bundle.ref.recording_id] = bundle_dropouts
 
     for problem in check_coverage(manifest, report.findings, dropouts):
         report.findings.append(Finding(

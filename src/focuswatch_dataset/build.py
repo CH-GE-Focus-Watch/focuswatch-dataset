@@ -52,7 +52,7 @@ from .adapters.base import RecordingBundle
 from .manifest import build_channels, build_manifest, check_manifest_consistency
 from .redact import RedactionPolicy, redact_bundle
 from .validate import (
-    Finding, ValidationReport, check_coverage, detect_dropouts, validate_bundle,
+    Dropout, Finding, ValidationReport, check_coverage, detect_dropouts, validate_bundle,
 )
 from .write import write_table
 
@@ -90,7 +90,7 @@ def _git_sha() -> str:
             return ""
 
 
-def _load_bundle(name: str, root: Path) -> list[RecordingBundle]:
+def _load_bundle(name: str, root: Path, build_git_sha: str) -> list[RecordingBundle]:
     """Discover and load every recording of one source, tagged with build-time meta.
 
     Any exception here - a malformed source CSV, an adapter bug, a recording
@@ -114,7 +114,7 @@ def _load_bundle(name: str, root: Path) -> list[RecordingBundle]:
             raise RuntimeError(
                 f"failed to load recording '{ref.recording_id}' (source '{name}'): {exc}"
             ) from exc
-        bundle.meta["build_git_sha"] = _git_sha()
+        bundle.meta["build_git_sha"] = build_git_sha
         bundles.append(bundle)
     return bundles
 
@@ -261,6 +261,7 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     report = ValidationReport()
     loaded_bundles: list[RecordingBundle] = []
     bundles: list[RecordingBundle] = []
+    build_git_sha = _git_sha()
 
     # Why: sorted() on the caller-supplied dict, not the dict's own insertion
     # order - a build must produce identical bytes regardless of the order
@@ -268,26 +269,28 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
     # dict comprehension over os.listdir), not merely regardless of calling
     # build_dataset twice with the exact same dict object.
     for name, root in sorted(source_roots.items()):
-        loaded_bundles.extend(_load_bundle(name, root))
+        loaded_bundles.extend(_load_bundle(name, root, build_git_sha))
 
     _require_unique_recording_ids(loaded_bundles)
 
+    dropouts: dict[str, dict[str, Dropout]] = {}
     for bundle in loaded_bundles:
         # Why: redact_bundle, not a hand-rolled apply_redaction + meta
         # stamp - it is the one seam that guarantees the published
         # redaction_policy meta can never disagree with what was
         # actually done to the pen table (see redact.py's docstring).
         bundle = redact_bundle(bundle, policy)
-        report.findings += validate_bundle(bundle)
+        bundle_dropouts = detect_dropouts(bundle.tables)
+        dropouts[bundle.ref.recording_id] = bundle_dropouts
+        report.findings += validate_bundle(bundle, bundle_dropouts)
         bundles.append(bundle)
 
-    manifest_preview = build_manifest(bundles)
+    manifest_preview = build_manifest(bundles, dropouts)
     # Why (C4): computed once per bundle here, passed explicitly rather than
     # re-derived inside check_coverage (which never receives bundle.tables) -
     # the exact same computation manifest.build_manifest already ran to
     # populate issue_codes, so the two can never disagree about which
     # modality is a declared dropout.
-    dropouts = {b.ref.recording_id: detect_dropouts(b.tables) for b in bundles}
     gaps = check_coverage(manifest_preview, report.findings, dropouts)
     # Why: computed once and used everywhere validation_report.json is
     # written or returned - report.findings alone (no synthetic coverage_gap

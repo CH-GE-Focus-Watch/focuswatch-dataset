@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -528,6 +529,31 @@ def test_watch_hz_nominal_is_parsed_from_metadata_sample_rate(tmp_path):
     a = SensorLoggerAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
     assert bundle.meta["watch_hz_nominal"] == 50.0
+
+
+def test_load_reads_metadata_csv_once_while_preserving_its_derived_values(tmp_path, monkeypatch):
+    """One parsed metadata frame supplies all fields load publishes from it."""
+    import focuswatch_dataset.adapters.sensorlogger as sensorlogger_mod
+
+    write_fixture(tmp_path, standardisation=True)
+    metadata_path = tmp_path / "E2_session6" / "Metadata.csv"
+    real_read_csv = sensorlogger_mod.pd.read_csv
+    metadata_reads = 0
+
+    def read_csv(path, *args, **kwargs):
+        nonlocal metadata_reads
+        if Path(path) == metadata_path:
+            metadata_reads += 1
+        return real_read_csv(path, *args, **kwargs)
+
+    monkeypatch.setattr(sensorlogger_mod.pd, "read_csv", read_csv)
+    adapter = SensorLoggerAdapter()
+    bundle = adapter.load(adapter.discover(tmp_path)[0])
+
+    assert bundle.meta["src_standardisation"] is True
+    assert bundle.meta["watch_hz_nominal"] == 100.0
+    assert bundle.meta["session_start_ns"] == T0_NS
+    assert metadata_reads == 1
 
 
 def test_watch_hz_nominal_falls_back_to_measured_when_sample_rate_is_absent(tmp_path):

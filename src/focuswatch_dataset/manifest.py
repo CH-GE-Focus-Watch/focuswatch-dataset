@@ -52,7 +52,7 @@ import pandas as pd
 from . import schema as S
 from .adapters.base import RecordingBundle
 from .time_axis import median_rate_hz
-from .validate import detect_dropouts
+from .validate import Dropout, detect_dropouts
 
 MANIFEST_COLUMNS = (
     "recording_id", "participant_id", "cohort", "pipeline",
@@ -231,7 +231,9 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     )
 
 
-def table_derived_manifest_values(b: RecordingBundle) -> dict[str, object]:
+def table_derived_manifest_values(
+    b: RecordingBundle, dropouts: dict[str, Dropout] | None = None,
+) -> dict[str, object]:
     """Manifest fields whose values are determined entirely by published tables."""
     t0, t1 = _span(b)
     row: dict[str, object] = {
@@ -262,7 +264,8 @@ def table_derived_manifest_values(b: RecordingBundle) -> dict[str, object]:
     if (head := b.tables.get("headimu")) is not None:
         row["head_hz_measured"] = _rate(head)
     row["n_writing_tasks"], row["n_idle_tasks"] = _task_counts(b.tables.get("markers"))
-    dropouts = detect_dropouts(b.tables)
+    if dropouts is None:
+        dropouts = detect_dropouts(b.tables)
     row["issue_codes"] = json.dumps([
         {"code": "modality_dropout", "modality": modality, "n_samples": dropout.n_samples,
          "coverage_ratio": dropout.coverage_ratio}
@@ -271,11 +274,15 @@ def table_derived_manifest_values(b: RecordingBundle) -> dict[str, object]:
     return row
 
 
-def build_manifest(bundles: list[RecordingBundle]) -> pd.DataFrame:
+def build_manifest(
+    bundles: list[RecordingBundle],
+    dropouts_by_recording: dict[str, dict[str, Dropout]] | None = None,
+) -> pd.DataFrame:
     rows = []
     for b in bundles:
         row: dict[str, object] = dict(_DEFAULTS)
-        row.update(table_derived_manifest_values(b))
+        dropouts = (dropouts_by_recording or {}).get(b.ref.recording_id)
+        row.update(table_derived_manifest_values(b, dropouts))
 
         # Everything else the adapter declared, excluding the fields just
         # derived above (a redundant meta declaration - today always
