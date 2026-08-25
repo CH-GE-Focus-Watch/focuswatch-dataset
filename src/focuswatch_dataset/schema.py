@@ -121,6 +121,13 @@ TIME_DOMAIN_PHONE_WALL_CLOCK = "phone_wall_clock"
 # their row's modality clock. AirPods sensor timestamps are device uptime.
 TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK = "device_monotonic_clock"
 
+# A pairing based on overlapping ranges from independently maintained wall
+# clocks. The clocks have not been synchronised and no offset is applied, so
+# sample-level cross-modal joins are approximate even though both axes use a
+# Unix epoch representation.
+TIME_ALIGNMENT_OVERLAP_ONLY = "overlap_only"
+TIME_ALIGNMENT_VALUES = ("shared_clock", "estimated_delta", TIME_ALIGNMENT_OVERLAP_ONLY)
+
 # Which modality's Finding stream a manifest capability flag gates. The single
 # source both validate.check_coverage (which physical checks a flag requires)
 # and manifest.build_manifest (which flags are recomputed from table/column
@@ -135,6 +142,7 @@ CAPABILITY_FLAG_MODALITY: dict[str, str] = {
     **MODALITY_FLAGS,
     "has_gravity": "watch",
     "has_quaternion": "watch",
+    "has_watch_gyro": "watch",
     "has_head_gravity": "headimu",
     "has_head_quaternion": "headimu",
     "has_head_gyro": "headimu",
@@ -153,6 +161,7 @@ CAPABILITY_FLAG_MODALITY: dict[str, str] = {
 CAPABILITY_FLAG_COLUMNS: dict[str, tuple[str, ...]] = {
     "has_gravity": COLUMNS[Quantity.GRAVITY],
     "has_quaternion": COLUMNS[Quantity.QUAT],
+    "has_watch_gyro": COLUMNS[Quantity.GYRO],
     "has_head_gravity": COLUMNS[Quantity.GRAVITY],
     "has_head_quaternion": COLUMNS[Quantity.QUAT],
     "has_head_gyro": COLUMNS[Quantity.GYRO],

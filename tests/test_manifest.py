@@ -189,6 +189,18 @@ def test_structural_flag_overrides_a_wrong_meta_declaration():
     assert bool(m["has_head_gyro"]) is True
 
 
+def test_watch_gyro_capability_is_derived_from_columns():
+    with_gyro = build_manifest([bundle()]).iloc[0]
+    assert bool(with_gyro["has_watch_gyro"])
+
+    without_gyro_bundle = bundle()
+    without_gyro_bundle.tables["watch"] = without_gyro_bundle.tables["watch"].drop(
+        columns=list(S.COLUMNS[S.Quantity.GYRO])
+    )
+    without_gyro = build_manifest([without_gyro_bundle]).iloc[0]
+    assert not bool(without_gyro["has_watch_gyro"])
+
+
 def test_manifest_built_from_a_real_bundle_drives_coverage_for_head_gyro():
     """Reproduces the exact bug class the brief describes for AirPods.
 

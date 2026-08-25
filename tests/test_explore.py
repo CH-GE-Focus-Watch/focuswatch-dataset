@@ -112,6 +112,7 @@ def test_facets_have_understandable_german_labels_and_manifest_conditions():
 
     assert {"Smartwatch", "Head IMU", "Smart Pen", "Observer annotation"} <= labels
     assert "Watch gravity" in labels
+    assert FACETS["watch_gyro"].condition == ("has_watch_gyro", True)
     assert FACETS["watch_50_hz"].condition == ("watch_hz_nominal", 50.0)
     assert FACETS["acceleration_user"].condition == ("accel_semantics", "user")
 
