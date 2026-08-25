@@ -1,157 +1,160 @@
 # focuswatch-dataset
 
-`focuswatch-dataset` converts heterogeneous wearable-sensor and annotation
-pipelines into a documented Parquet dataset for the FocusWatch / ML4SCS
-handwriting-detection project. It gives downstream researchers one manifest
-schema and a metadata-first way to select recordings, without having to learn
-the original capture formats.
+`focuswatch-dataset` converts heterogeneous wearable and annotation exports
+into one validated Parquet dataset for the FocusWatch / ML4SCS handwriting
+detection project. It standardises schemas and units without pretending that
+different sensors, clocks, or acceleration semantics are interchangeable.
 
-> **Project status:** This repository is ready for project review and
-> reproducibility testing. The published Parquet archive and its DOI will be
-> released separately; neither raw recordings nor private source paths are
-> stored in this repository.
+## Dataset scope
 
-## What the dataset contains
-
-The current release-candidate archive contains 67 recordings across three
-cohorts:
+The current release candidate contains 75 recordings across four cohorts.
 
 | Cohort | Recordings | Primary modalities |
 | --- | ---: | --- |
-| ML4SCS | 33 | wrist IMU, pen, task markers |
-| AIRPODS | 25 | head IMU, observer attention annotations |
-| ETH | 9 | wrist and head IMU; selected pen/marker streams |
+| ML4SCS | 33 | wrist IMU, Moleskine pen, task markers |
+| AIRPODS | 25 | head IMU, observer attention intervals |
+| ETH | 9 | wrist/head IMU, selected pen and marker streams |
+| MOLESKINE | 8 | watch accelerometer and Moleskine pen |
 
-The archive uses Parquet tables for wrist and head IMU, pen traces, task
-markers, and observer attention intervals. `sessions.parquet` is the manifest:
-one row per recording with capability flags such as `has_watch`, `has_headimu`,
-`has_gravity`, and `has_pen`. `channels.parquet` documents each published
-column's unit, semantics, sampling rate, and time domain.
+`sessions.parquet` is the one-row-per-recording manifest.
+`channels.parquet` documents every published column's unit, semantics, sample
+rate, and time domain. Modality files use one uniform layout:
+`{modality}/{recording_id}.parquet`.
 
-Different cohorts expose different sensors. Always filter the manifest before
-loading samples; the capability flags make those differences explicit.
+Participant identifiers are source-scoped, not a defensible count of distinct
+people across cohorts. The Moleskine pilot has no complete publishable
+participant attribution and therefore uses `MOLESKINE-UNKNOWN`; the raw
+filenames' informal labels are not published.
 
 ## Install
 
-Requires Python 3.11 or later.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11 or later.
 
 ```bash
 git clone https://github.com/CH-GE-Focus-Watch/focuswatch-dataset.git
 cd focuswatch-dataset
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --all-extras
 ```
 
-For the terminal explorer, install the `tui` extra:
+Use `uv sync --extra dev` for tests only or `uv sync --extra tui` for the
+terminal explorer.
+
+## Build and validate a bundle
+
+Raw participant data is intentionally excluded from Git. Place each source in
+a local ignored directory, extract the ML4SCS partner export, and pass every
+source explicitly:
 
 ```bash
-pip install -e ".[tui]"
+uv run fw build \
+  --source ml4scs=PATH/TO/ml4scs_partner_export \
+  --source ege=PATH/TO/data_ege_pipeline \
+  --source sensorlogger=PATH/TO/data_ege_sensorlogger_pipeline \
+  --source airpods=PATH/TO/labeled_data_AirPods_GS \
+  --source moleskine=PATH/TO/raw_moleskine \
+  --out out/focuswatch-dataset \
+  --redact all_xy
+
+uv run fw validate --dataset out/focuswatch-dataset
+uv run fw report --dataset out/focuswatch-dataset
 ```
 
-## Work with a dataset bundle
+`--redact` is required so a release cannot silently inherit a coordinate
+policy. Pen coordinates can reconstruct handwriting; `all_xy` is the safe
+public-release choice unless consent and disclosure review explicitly approve
+another policy. `--no-strict` is for diagnostics, not publication.
 
-Obtain the separately distributed dataset bundle and set `DATASET_ROOT` to its
-directory. A bundle contains `sessions.parquet`, `channels.parquet`,
-`validation_report.json`, and the modality directories described above.
+Builds are strict and atomic by default: any source, physics, coverage, or
+manifest failure prevents replacement of the previous output. A successful
+bundle contains:
 
-### Explore and export a subset
-
-The terminal explorer is the recommended starting point. It filters the
-manifest with plain-language facets and updates the matching recording count
-live. Press `e` to export a ready-to-use subset containing filtered
-`sessions.parquet`, `channels.parquet`, `selection.json`, and the selected
-sensor files.
-
-```bash
-fw explore DATASET_ROOT
+```text
+sessions.parquet        canonical manifest
+sessions.csv            accessible manifest copy
+channels.parquet        per-recording channel metadata
+{modality}/{recording_id}.parquet
+validation_report.json
+data_dictionary.md
+datapackage.json
+README.md
+LICENSE
 ```
 
-Exports are created in a new timestamped folder in Downloads when that folder
-exists; otherwise they are created in the current terminal directory. The TUI
-prints the exact path after completion. To choose a different location, pass a
-path for a **new** folder:
+The names are intentionally uniform. Source filenames never become output
+filenames; `recording_id` is the stable join key across the manifest, channels,
+and modality directories.
 
-```bash
-fw explore DATASET_ROOT --export PATH/TO/new-selection
-```
+## Use a published bundle
 
-`--export` never overwrites an existing folder. The export copies the selected
-raw modality tables plus the metadata needed to use them. Apply at least one
-filter before exporting: with no filters, the explorer selects all recordings
-and can copy the whole archive. Press `c` to copy the equivalent pandas query,
-`r` to reset filters, `p` for provenance details, and `q` to quit.
-
-### Inspect or script against the bundle
-
-Inspect the manifest and verify the archive:
-
-```bash
-fw report --dataset DATASET_ROOT
-fw validate --dataset DATASET_ROOT
-```
-
-The Python example demonstrates metadata-first selection, then loads a small,
-explicit subset of samples:
-
-```bash
-python examples/select_and_load.py DATASET_ROOT --require-pen --modality watch \
-  --accel-semantics user --limit 10
-```
-
-The example reads only `sessions.parquet` during selection and loads sensor rows
-only after the recording IDs are known. Increase or omit `--limit` only when
-you intentionally want to load more data into memory. The equivalent Python
-workflow is:
+Start with metadata, then load only selected recordings:
 
 ```python
 from focuswatch_dataset import load_manifest, load_recordings
 
-manifest = load_manifest("DATASET_ROOT")
-selected = manifest.query(
-    "has_watch and has_pen and accel_semantics == 'user'"
-)
-samples = load_recordings(
-    "DATASET_ROOT", selected["recording_id"].tolist(), modality="watch"
+root = "PATH/TO/DATASET"
+manifest = load_manifest(root)
+selected = manifest.query("has_watch and has_pen and accel_semantics == 'user'")
+watch = load_recordings(
+    root,
+    selected["recording_id"].head(10).tolist(),
+    modality="watch",
 )
 ```
 
-`load_recordings` refuses to silently mix incompatible watch acceleration
-semantics. Use the manifest and `channels.parquet` to make a deliberate choice.
+`load_recordings` refuses to mix incompatible watch acceleration semantics.
+When total acceleration has a quaternion, `to_user_acceleration` can derive
+gravity-removed acceleration; without orientation, the conversion is not
+possible and the package does not guess.
 
-## Reproducibility and validation
-
-The build process normalizes source-specific schemas, records provenance, and
-runs structural and physical validation. The current release-candidate archive
-was built with the strict gate and contains 1,146 passing validation checks.
-`fw validate` independently reopens the published archive and verifies its
-manifest, tables, channel descriptions, redaction declaration, and derived
-summaries.
-
-Before a journal release, rebuild the archive from a clean Git checkout. This
-ensures its recorded `build_git_sha` identifies a clean, reproducible source
-revision rather than a `-dirty` working tree.
-
-## Develop and test
-
-Run the full test suite:
+For interactive metadata filtering and subset export:
 
 ```bash
-pytest tests/
+uv run fw explore PATH/TO/DATASET
 ```
 
-The repository intentionally contains no participant recordings. Verify that
-no data artefacts were added before committing:
+Press `e` to export the selected recordings, `c` to copy the equivalent pandas
+query, `p` for provenance, and `q` to quit. Use `--export NEW/DIRECTORY` to
+choose a destination; existing directories are never overwritten.
 
-```bash
-git ls-files | python scripts/check_no_data.py
-```
+## Important limitations
+
+- Moleskine watch and pen streams use independent wall clocks. They are paired
+  by overlapping recording ranges only; no clock offset is estimated or
+  applied, so sample-level joins are approximate.
+- Acceleration may include gravity (`total`) or exclude it (`user`). Filter on
+  `accel_semantics` before combining recordings.
+- Pen coordinates and pressure remain device-native, not millimetres or a
+  cross-device calibrated scale. See each row's `pen_xy_unit` and
+  `pen_pressure_scale`.
+- Automated validation covers structure, timing, physical plausibility,
+  redaction, and archive consistency. It does not establish participant
+  consent, redistribution rights, anonymisation sufficiency, or scientific
+  validity.
+
+## Publication checklist
+
+Before creating a public archive:
+
+1. Build from a clean reviewed commit so `build_git_sha` is not suffixed
+   `-dirty`.
+2. Use an explicitly approved redaction policy and independently review pen,
+   marker, and participant metadata for disclosure risk.
+3. Confirm consent and redistribution rights for every cohort and confirm that
+   CC BY 4.0 is authorised for the dataset.
+4. Run `uv run pytest` and `uv run fw validate --dataset ...`; require zero
+   failed checks.
+5. Inspect `sessions.parquet`, `validation_report.json`, and the generated
+   bundle documentation; record a checksum for the final archive.
+6. Replace the author and DOI placeholders in `CITATION.cff`, and add the final
+   dataset citation/DOI to the release record.
+7. Confirm no raw data is tracked:
+
+   ```bash
+   git ls-files | xargs uv run python scripts/check_no_data.py
+   ```
 
 ## License and citation
 
-The software in this repository is licensed under Apache-2.0; see
-[`LICENSE`](LICENSE). The dataset archive is licensed separately as CC BY 4.0.
-
-Citation metadata for the software is in [`CITATION.cff`](CITATION.cff). The
-dataset DOI and final author metadata remain placeholders until the public
-archive is released.
+The software is Apache-2.0; see [`LICENSE`](LICENSE). A generated dataset bundle
+declares CC BY 4.0 separately. `CITATION.cff` describes the software and still
+contains explicit placeholders that must be completed before release.

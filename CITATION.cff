@@ -5,7 +5,7 @@ message: If you use this software, please cite it as below.
 type: software
 title: focuswatch-dataset
 abstract: >-
-  Converts four heterogeneous wrist/head-IMU, pen and observer-annotation
+  Converts heterogeneous wrist/head-IMU, pen and observer-annotation
   capture pipelines into one canonical, physically validated Parquet dataset
   for a journal data descriptor.
 
