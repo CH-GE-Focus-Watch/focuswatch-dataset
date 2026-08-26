@@ -20,7 +20,7 @@ from .validate import Dropout, detect_dropouts
 MANIFEST_COLUMNS = (
     "recording_id", "participant_id", "cohort", "pipeline",
     "has_watch", "has_watch_rawaccel", "has_headimu", "has_pen", "has_markers", "has_attention",
-    "watch_hz_nominal", "watch_hz_measured", "has_gravity", "has_quaternion",
+    "watch_hz_nominal", "watch_hz_measured", "has_gravity", "has_quaternion", "has_watch_gyro",
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
     "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
@@ -165,7 +165,7 @@ def _primary_time_domain(by_modality: dict[str, str]) -> str:
 
 
 def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary: str) -> str:
-    """Return an explicit warning for every estimated-delta recording.
+    """Return an explicit warning when modalities use clocks without exact alignment.
 
     Computed from time_domain_by_modality, not hand-written per adapter: a
     modality whose declared clock differs from the primary one is named here
@@ -174,8 +174,6 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     estimated_delta cohort today (pen/markers on the server clock, watch on
     its own capture clock), but the derivation does not hardcode that.
     """
-    if time_alignment != "estimated_delta":
-        return ""
     # Why: `d != primary`, not `d and d != primary` - a blank domain must
     # surface as differing (and therefore visible in the note), not be
     # silently treated as if it agreed with the primary clock.
@@ -183,15 +181,25 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     if not differing:
         return ""
     domains = sorted({by_modality[m] for m in differing})
-    return (
+    prefix = (
         f"{', '.join(differing)} timestamps are on {' / '.join(domains)}, not the "
         f"{primary!r} clock the primary motion stream uses (see channels.parquet's "
-        "time_domain column for the per-modality declaration). The offset between "
-        "the clocks is estimated but not applied or published: pen_delta_s is left "
-        "NaN by design (publishing an estimated delta risks irreparable "
-        "mislabeling); pen_delta_sigma is only the estimate's confidence, not the "
-        "offset itself."
+        "time_domain column for the per-modality declaration). "
     )
+    if time_alignment == "estimated_delta":
+        return prefix + (
+            "The offset between the clocks is estimated but not applied or published: "
+            "pen_delta_s is left NaN by design (publishing an estimated delta risks "
+            "irreparable mislabeling); pen_delta_sigma is only the estimate's confidence, "
+            "not the offset itself."
+        )
+    if time_alignment == S.TIME_ALIGNMENT_OVERLAP_ONLY:
+        return prefix + (
+            "Modalities were paired only because their wall-clock ranges overlap. The "
+            "device clocks were not explicitly synchronised, and no offset was estimated "
+            "or applied; treat sample-level cross-modal joins as approximate."
+        )
+    return ""
 
 
 def table_derived_manifest_values(

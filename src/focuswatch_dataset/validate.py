@@ -330,6 +330,10 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
             f"accel_semantics must be one of {sorted(S.ACCEL_SEMANTICS_QUANTITY)} and its "
             "implied accel_total_*/accel_user_* columns must be present",
             quantity is not None and all(c in tables[modality].columns for c in S.COLUMNS[quantity]))
+
+    alignment = meta.get("time_alignment")
+    add("time_alignment_vocabulary", modality or "-", alignment or "-",
+        f"one of {S.TIME_ALIGNMENT_VALUES}", alignment in S.TIME_ALIGNMENT_VALUES)
     return out
 
 
@@ -342,23 +346,11 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
 # has_attention). Every manifest flag maps to the modality name its findings
 # carry in `Finding.modality`, matching the table key every adapter and
 # `validate_recording` already use.
-_REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band", "gyro_range")
-# Why: watch_rawaccel is accel-only by construction - the name says so, and no
-# export of a raw-accelerometer stream will ever carry a gyroscope. That is a
-# structural fact of the modality, not a property of any particular
-# recording, so gyro_range is excluded from its required set outright rather
-# than gated by a flag: a requirement no instance could ever satisfy is a
-# permanent false alarm, not a safety net.
-_MOTION_CHECKS_NO_GYRO = tuple(c for c in _REQUIRED_MOTION_CHECKS if c != "gyro_range")
-# has_headimu's base set also excludes gyro_range - whether a head table
-# carries a gyroscope is a DATA fact that varies by source (Ege's does not;
-# SensorLogger's and AirPods' do, and AirPods' head gyro is that cohort's
-# only motion signal), so it is required separately, gated by has_head_gyro,
-# below - never assumed either way from has_headimu alone.
+_REQUIRED_MOTION_CHECKS = ("time_monotonic", "sample_rate", "accel_semantic_band")
 _MOTION_REQUIRED_CHECKS = {
     "has_watch": _REQUIRED_MOTION_CHECKS,
-    "has_headimu": _MOTION_CHECKS_NO_GYRO,
-    "has_watch_rawaccel": _MOTION_CHECKS_NO_GYRO,
+    "has_headimu": _REQUIRED_MOTION_CHECKS,
+    "has_watch_rawaccel": _REQUIRED_MOTION_CHECKS,
 }
 # Why: S.MODALITY_FLAGS is the single source for which modality a
 # has_<modality> flag gates - manifest.py's structural derivation reads the
@@ -375,6 +367,7 @@ _MOTION_MODALITY_FLAGS = ("has_watch", "has_headimu", "has_watch_rawaccel")
 _CAPABILITY_CHECKS = (
     ("has_gravity", "gravity_norm"),
     ("has_quaternion", "quat_norm"),
+    ("has_watch_gyro", "gyro_range"),
     ("has_head_gravity", "gravity_norm"),
     ("has_head_quaternion", "quat_norm"),
     ("has_head_gyro", "gyro_range"),

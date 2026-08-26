@@ -10,6 +10,21 @@ from .redact import RedactionPolicy
 from .validate import validate_dataset
 
 
+def _source_roots(specs: list[str]) -> dict[str, Path]:
+    roots: dict[str, Path] = {}
+    for spec in specs:
+        name, separator, value = spec.partition("=")
+        if not separator or not name.strip() or not value.strip():
+            raise ValueError(
+                f"invalid --source {spec!r}; expected a non-empty NAME=PATH"
+            )
+        name = name.strip()
+        if name in roots:
+            raise ValueError(f"duplicate --source name {name!r}")
+        roots[name] = Path(value)
+    return roots
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="fw")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -17,8 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("build")
     b.add_argument("--source", action="append", required=True, metavar="NAME=PATH")
     b.add_argument("--out", required=True)
-    b.add_argument("--redact", choices=[p.value for p in RedactionPolicy],
-                   default=RedactionPolicy.NONE.value)
+    b.add_argument(
+        "--redact", choices=[p.value for p in RedactionPolicy], required=True,
+        help="required explicit pen-coordinate policy; use all_xy for a public release",
+    )
     b.add_argument("--no-strict", action="store_true")
 
     v = sub.add_parser("validate")
@@ -38,11 +55,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "build":
-        roots = dict(s.split("=", 1) for s in args.source)
         try:
-            report = build_dataset({k: Path(v) for k, v in roots.items()}, Path(args.out),
+            roots = _source_roots(args.source)
+            report = build_dataset(roots, Path(args.out),
                                    RedactionPolicy(args.redact), strict=not args.no_strict)
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             # Why: a physical-check failure, a coverage gap, a manifest
             # inconsistency and a load/discovery failure all surface here as
             # a RuntimeError (see build.py) - this CLI runs in CI, where a
@@ -92,11 +109,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"report failed: could not read bundle at {dataset}: {exc}")
         return 1
     # participant_id is namespaced per cohort, so
-    # this count would be unchanged if all three cohorts had recorded the same
+    # this count would be unchanged if every cohort had recorded the same
     # people - "participants" hands a citing paper an N the data cannot
     # support. Matches the README wording (docs.write_readme), which commit
     # 243ee07 already fixed for this exact reason.
+    n_identifiers = int(manifest["participant_id"].nunique())
+    identifier_noun = "identifier" if n_identifiers == 1 else "identifiers"
     print(f"{len(manifest)} recordings, "
-          f"{manifest['participant_id'].nunique()} participant identifiers")
+          f"{n_identifiers} participant {identifier_noun}")
     print(manifest.groupby("cohort").size().to_string())
     return 0

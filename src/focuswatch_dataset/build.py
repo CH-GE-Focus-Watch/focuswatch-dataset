@@ -67,7 +67,13 @@ def _load_bundle(name: str, root: Path, build_git_sha: str) -> list[RecordingBun
     recording named, then left to propagate: see the module docstring for
     why that aborts the whole build rather than skipping the recording.
     """
-    adapter = base.get_adapter(name)
+    try:
+        adapter = base.get_adapter(name)
+    except KeyError as exc:
+        available = ", ".join(sorted(adapter.name for adapter in base.all_adapters()))
+        raise RuntimeError(
+            f"unknown source adapter {name!r}; available adapters: {available}"
+        ) from exc
     try:
         refs = adapter.discover(Path(root))
     except Exception as exc:

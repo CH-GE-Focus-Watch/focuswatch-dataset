@@ -80,23 +80,27 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
     counts = _modality_file_counts(out)
     n_recordings = len(manifest)
     n_participants = int(manifest["participant_id"].nunique())
+    identifier_noun = "identifier" if n_participants == 1 else "identifiers"
+    redaction_policy = str(manifest["redaction_policy"].iloc[0])
+    has_overlap_only = bool(
+        (manifest["time_alignment"] == S.TIME_ALIGNMENT_OVERLAP_ONLY).any()
+    )
     cohort_counts = manifest.groupby("cohort").size().sort_index()
 
     lines = [
         "# FocusWatch dataset", "",
         "Wrist and head IMU, pen and observer-annotation ground truth for a",
         f"handwriting-detection study. {n_recordings} recordings, "
-        f"{n_participants} participant identifiers, schema version "
+        f"{n_participants} participant {identifier_noun}, schema version "
         f"{S.SCHEMA_VERSION}.", "",
         # Why: "participants" is the N a citing paper will quote, and this count
         # cannot support it. Identifiers are namespaced per cohort, so the
-        # number would be identical even if all three cohorts had recorded the
+        # number would be identical even if every cohort had recorded the
         # same people - the cohorts were run by different teams and no mapping
         # between them exists.
-        "Identifiers are namespaced per cohort (`ML4SCS-`, `ETH-`, `AIRPODS-`), so "
-        "this is a count of identifiers, not of established distinct people: no "
-        "participant mapping across cohorts exists. Within a cohort, one identifier "
-        "is one person.", "",
+        "Identifiers are source-scoped, so this is not a count of established distinct "
+        "people: no complete mapping across cohorts or sources exists, and an identifier "
+        "ending in `-UNKNOWN` means the source has no publishable attribution.", "",
         "## Contents", "",
         "| file | rows | what it is |",
         "|---|---|---|",
@@ -121,8 +125,8 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         "from focuswatch_dataset import load_manifest, load_recording, by_flags", "",
         'root = "."  # the directory this README is in',
         "m = load_manifest(root)", "",
-        "# every recording with a 100 Hz watch stream carrying gravity",
-        "subset = by_flags(m, has_watch=True, has_gravity=True)", "",
+        "# every recording with a watch stream",
+        "subset = by_flags(m, has_watch=True)", "",
         'rid = subset.iloc[0]["recording_id"]',
         'df = load_recording(root, rid, modality="watch")',
         "```", "",
@@ -133,10 +137,29 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         '- **Load one recording\'s table**: `load_recording(root, recording_id, modality="watch")`.',
         "- **Load several at once**: `load_recordings(root, recording_ids, modality=\"watch\")` - "
         "refuses to silently mix `user` and `total` acceleration semantics.",
-        "- **Total acceleration but you need gravity removed**: `to_user_acceleration(df)` derives "
-        "it from the quaternion; the bundle itself never guesses an orientation.",
+        "- **Total acceleration but you need gravity removed**: when `has_quaternion` is true, "
+        "`to_user_acceleration(df)` derives it from orientation. Without a quaternion this "
+        "conversion is not available, and the bundle does not guess.",
         "- **What did this build verify?**: read `validation_report.json` - every physical check, "
         "per recording, with the observed value and the tolerance it was checked against.",
+        "", "## Limitations", "",
+        f"- This bundle's pen-coordinate redaction policy is `{redaction_policy}`; see "
+        "`sessions.parquet` for the per-recording declaration.",
+        "- Acceleration semantics vary by source. Filter on `accel_semantics` before "
+        "combining recordings.",
+        "- Pen coordinates and pressure are device-native, not millimetres or a "
+        "cross-device calibrated scale.",
+        "- Automated validation covers structure, timing, physical plausibility, redaction, "
+        "and archive consistency. It does not establish participant consent, redistribution "
+        "rights, anonymisation sufficiency, or scientific validity.",
+    ]
+    if has_overlap_only:
+        lines += [
+            "- Recordings with `time_alignment = \"overlap_only\"` pair independent wall "
+            "clocks by overlapping ranges; no offset is applied, so sample-level joins are "
+            "approximate. Read `alignment_note` before combining modalities."
+        ]
+    lines += [
         "", "## License", "",
         "The data in this bundle is CC BY 4.0 - see `LICENSE`. The `focuswatch-dataset` software "
         "that produced it is Apache-2.0, in its own source repository.",
@@ -194,7 +217,9 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
              "only the primary motion stream. Consult `channels.parquet` before joining",
              "modalities or provenance timestamps. For `time_alignment = \"estimated_delta\"`,",
              "read `alignment_note`; `pen_delta_sigma` is the estimate's confidence, not an",
-             "offset value.", "",
+             "offset value. For `time_alignment = \"overlap_only\"`, the independently",
+             "maintained device clocks only establish coarse recording membership, not exact",
+             "sample alignment.", "",
              "Pen rows with `x = y = -1` are framing events without a position. They are",
              "retained deliberately; treating them as measurements skews any positional statistic.", "",
              "## Unit vocabulary", "",
@@ -213,6 +238,16 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         "| value | meaning |", "|---|---|"]
     for value, meaning in _TIME_DOMAIN_OVERRIDE_VOCABULARY:
         lines.append(f"| `{value}` | {meaning} |")
+
+    lines += [
+        "", "## Time alignment vocabulary", "",
+        "| value | meaning |", "|---|---|",
+        "| `shared_clock` | Modalities use the same capture or backend clock. |",
+        "| `estimated_delta` | An inter-clock offset was estimated but is not applied; read "
+        "`alignment_note`. |",
+        "| `overlap_only` | Independent wall-clock ranges overlap, but no offset was estimated "
+        "or applied; cross-modal sample joins are approximate. |",
+    ]
 
     lines += [
         "", "## Pen coordinate representation", "",

@@ -19,13 +19,15 @@ from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 from .test_adapter_airpods import write_fixture as write_airpods
 from .test_adapter_ege import write_fixture as write_ege
 from .test_adapter_ml4scs import write_fixture as write_ml4scs
+from .test_adapter_moleskine import write_fixture as write_moleskine
 from .test_adapter_sensorlogger import write_fixture as write_sl
 
 
 def sources(tmp_path):
     roots = {}
     for name, writer in (("ml4scs", write_ml4scs), ("ege", write_ege),
-                         ("sensorlogger", write_sl), ("airpods", write_airpods)):
+                         ("sensorlogger", write_sl), ("airpods", write_airpods),
+                         ("moleskine", write_moleskine)):
         d = tmp_path / "src" / name
         d.mkdir(parents=True)
         writer(d)
@@ -69,7 +71,7 @@ def test_build_produces_all_expected_artefacts(tmp_path):
 def test_manifest_covers_every_cohort(tmp_path):
     out = tmp_path / "out"
     build_dataset(sources(tmp_path), out)
-    assert set(load_manifest(out)["cohort"]) == {"ML4SCS", "ETH", "AIRPODS"}
+    assert set(load_manifest(out)["cohort"]) == {"ML4SCS", "ETH", "AIRPODS", "MOLESKINE"}
 
 
 def test_build_is_deterministic(tmp_path):
@@ -208,11 +210,36 @@ def test_redaction_policy_is_recorded_in_the_manifest(tmp_path):
 def test_cli_build_and_validate(tmp_path):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out)]
+    args = ["build", "--out", str(out), "--redact", "none"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
     assert main(["validate", "--dataset", str(out)]) == 0
+
+
+def test_cli_build_requires_an_explicit_redaction_policy(tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["build", "--source", f"moleskine={tmp_path}",
+              "--out", str(tmp_path / "out")])
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    [
+        (["missing-separator"], "expected a non-empty NAME=PATH"),
+        (["moleskine=one", "moleskine=two"], "duplicate --source name"),
+        (["unknown=somewhere"], "unknown source adapter"),
+    ],
+)
+def test_cli_build_reports_invalid_source_arguments_without_a_traceback(
+    tmp_path, capsys, sources, message,
+):
+    args = ["build", "--out", str(tmp_path / "out"), "--redact", "none"]
+    for source in sources:
+        args += ["--source", source]
+    assert main(args) == 1
+    assert message in capsys.readouterr().out
 
 
 def test_cli_validate_rejects_an_unknown_archive_redaction_policy(tmp_path):
@@ -678,7 +705,7 @@ def test_cli_build_reports_out_as_a_file_without_a_traceback(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
     out.write_text("occupied")
-    args = ["build", "--out", str(out)]
+    args = ["build", "--out", str(out), "--redact", "none"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 1
@@ -887,7 +914,7 @@ def test_git_sha_omits_the_dirty_suffix_on_a_clean_tree(monkeypatch):
 def test_cli_report(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out)]
+    args = ["build", "--out", str(out), "--redact", "none"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
@@ -897,15 +924,15 @@ def test_cli_report(tmp_path, capsys):
     printed = capsys.readouterr().out
     assert "recordings" in printed
     assert "participant identifiers" in printed
-    for cohort in ("ML4SCS", "ETH", "AIRPODS"):
+    for cohort in ("ML4SCS", "ETH", "AIRPODS", "MOLESKINE"):
         assert cohort in printed
 
 
 def test_cli_report_does_not_claim_more_distinct_people_than_it_can_show(tmp_path, capsys):
     """Fix round C item 4: `fw report` still printed "N participants" -
     exactly the claim commit 243ee07 removed from the README (`participant_id`
-    is namespaced per cohort, so the count would be identical if all three
-    cohorts had recorded the same people). It survived in this sibling
+    is namespaced per cohort, so the count would be identical if every
+    cohort had recorded the same people). It survived in this sibling
     surface; both must use the same wording so neither self-statement can
     drift from the other again.
     """
@@ -923,12 +950,22 @@ def test_cli_report_does_not_claim_more_distinct_people_than_it_can_show(tmp_pat
     assert re.search(r"\d+ participant identifiers", printed).group() in readme
 
 
+def test_cli_report_uses_singular_identifier_grammar(tmp_path, capsys):
+    root = tmp_path / "moleskine"
+    write_moleskine(root)
+    out = tmp_path / "out"
+    build_dataset({"moleskine": root}, out)
+
+    assert main(["report", "--dataset", str(out)]) == 0
+    assert "1 participant identifier\n" in capsys.readouterr().out
+
+
 def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):
     from focuswatch_dataset import schema as S
 
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out)]
+    args = ["build", "--out", str(out), "--redact", "none"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
 
@@ -957,7 +994,7 @@ def test_cli_report_on_a_missing_bundle_prints_a_message_not_a_traceback(tmp_pat
 def test_cli_validate_ignores_a_corrupt_historical_report(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out)]
+    args = ["build", "--out", str(out), "--redact", "none"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
@@ -1055,6 +1092,9 @@ def test_readme_is_generated_from_the_actual_build(tmp_path):
     # The recipe chapter must use the real, importable public API (I3), not
     # a stale snippet a reuser would copy-paste into an ImportError.
     assert "from focuswatch_dataset import load_manifest, load_recording, by_flags" in text
+    assert "## Limitations" in text
+    assert "redaction policy is `none`" in text
+    assert "time_alignment = \"overlap_only\"" in text
 
 
 # --- I5: the unit vocabulary ships defined, and pen units are disambiguated -
@@ -1154,7 +1194,7 @@ def test_data_dictionary_explains_pen_limitations_without_source_details(tmp_pat
 
 def test_readme_does_not_claim_more_distinct_people_than_it_can_show(tmp_path):
     """`participant_id` is namespaced per cohort (`ML4SCS-P01`, `AIRPODS-P1`),
-    so its cardinality would be unchanged if all three cohorts had recorded the
+    so its cardinality would be unchanged if every cohort had recorded the
     same people. Calling that number "participants" hands a citing paper an N
     the data cannot support, which is exactly the class of false self-statement
     this bundle must not contain.

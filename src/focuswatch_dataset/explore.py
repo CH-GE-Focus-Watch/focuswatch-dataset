@@ -34,6 +34,7 @@ FACETS: dict[str, Facet] = {
     "watch_quaternion": Facet(
         "Watch quaternion", "Signals", ("has_quaternion", True)
     ),
+    "watch_gyro": Facet("Watch gyroscope", "Signals", ("has_watch_gyro", True)),
     "head_gravity": Facet(
         "Head gravity", "Signals", ("has_head_gravity", True)
     ),
@@ -160,6 +161,7 @@ _FACET_MODALITIES: dict[str, tuple[str, ...]] = {
     "smartwatch": ("watch",),
     "watch_gravity": ("watch",),
     "watch_quaternion": ("watch",),
+    "watch_gyro": ("watch",),
     "watch_50_hz": ("watch",),
     "watch_100_hz": ("watch",),
     "acceleration_user": ("watch",),

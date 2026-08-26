@@ -268,6 +268,20 @@ def test_accel_semantics_unrecognised_value_fails_instead_of_silently_passing():
     assert "accel_semantics_matches_columns" in failed_checks(findings)
 
 
+def test_time_alignment_uses_a_closed_vocabulary():
+    watch = make_watch()
+    valid = validate_recording(
+        "R1", {"watch": watch},
+        {"accel_semantics": "user", "time_alignment": "overlap_only"},
+    )
+    assert "time_alignment_vocabulary" not in failed_checks(valid)
+
+    invalid = validate_recording(
+        "R1", {"watch": watch},
+        {"accel_semantics": "user", "time_alignment": "roughly_aligned"},
+    )
+    assert "time_alignment_vocabulary" in failed_checks(invalid)
+
 # --- Coverage matrix -----------------------------------------------------------
 
 def test_coverage_accepts_a_complete_report():
@@ -295,11 +309,11 @@ def test_coverage_rejects_a_silently_skipped_quaternion_check():
 
 def test_coverage_rejects_a_silently_skipped_gyro_check():
     manifest = pd.DataFrame([{"recording_id": "R1", "has_watch": True, "has_quaternion": True,
-                              "has_gravity": True, "has_headimu": False, "has_pen": False,
+                              "has_gravity": True, "has_watch_gyro": True,
+                              "has_headimu": False, "has_pen": False,
                               "has_watch_rawaccel": False, "has_markers": False,
                               "has_attention": False}])
-    # An adapter that dropped the gyro columns produces no gyro_range finding at all,
-    # even though gravity and quaternion are still present.
+    # A manifest claiming watch gyro must not pass if the table/check is absent.
     df = make_watch().drop(columns=list(S.COLUMNS[S.Quantity.GYRO]))
     findings = validate_motion_table(df, "R1", "watch", 100.0)
     findings += validate_recording("R1", {"watch": df}, {})

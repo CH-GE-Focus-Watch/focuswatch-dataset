@@ -10,6 +10,8 @@ alldata/
 *.parquet
 *.zip
 
+.DS_Store
+
 # Local agent process notes are not part of the public project documentation.
 docs/superpowers/
 docs/DESIGN.md
