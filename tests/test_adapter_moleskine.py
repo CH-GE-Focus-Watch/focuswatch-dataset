@@ -131,3 +131,25 @@ def test_load_rejects_unknown_draw_type(tmp_path):
     adapter = MoleskineAdapter()
     with pytest.raises(ValueError, match="unknown Moleskine drawType"):
         adapter.load(adapter.discover(tmp_path)[0])
+
+
+def test_recording_id_dates_the_recording_start_even_if_rows_are_out_of_order(tmp_path):
+    """The id and session_start_ns must name the same instant.
+
+    discover() reads only the timestamp column and load() sorts the table, so
+    reading an id off the first row would date a recording to a sample in its
+    middle as soon as an export is not written chronologically.
+    """
+    write_fixture(tmp_path)
+    csv = next((tmp_path / "sensorlog").glob("*.csv"))
+    rows = pd.read_csv(csv)
+    pd.concat([rows.iloc[[-1]], rows.iloc[:-1]]).to_csv(csv, index=False)
+
+    adapter = MoleskineAdapter()
+    ref = adapter.discover(tmp_path)[0]
+    start = pd.Timestamp(adapter.load(ref).meta["session_start_ns"], unit="ns", tz="UTC")
+
+    assert ref.recording_id == (
+        f"MOLESKINE-{start.strftime('%Y%m%dT%H%M%S')}{start.microsecond // 1000:03d}Z"
+    )
+

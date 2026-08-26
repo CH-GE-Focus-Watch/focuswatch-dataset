@@ -51,10 +51,15 @@ class MoleskineAdapter:
 
         refs = []
         for path in watch_files:
-            first = pd.read_csv(path, usecols=[_TIME], nrows=1)
-            if first.empty:
+            # Why: the earliest timestamp, not the first row. The recording id
+            # must name the same instant as the bundle's session_start_ns, which
+            # load() reads off the time-sorted table. Trusting row order would
+            # let an out-of-order export produce an id that dates the recording
+            # to a sample somewhere in its middle.
+            times = pd.read_csv(path, usecols=[_TIME])
+            if times.empty:
                 raise ValueError(f"{path}: watch CSV is empty")
-            t_ns = int(parse_iso_to_unix_ns(first[_TIME])[0])
+            t_ns = int(parse_iso_to_unix_ns(times[_TIME]).min())
             # Participant attribution is absent for five files and filenames
             # contain informal labels for three others. Publishing those labels
             # would leak source names and invent identity links, so every row is
