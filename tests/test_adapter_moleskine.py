@@ -153,3 +153,30 @@ def test_recording_id_dates_the_recording_start_even_if_rows_are_out_of_order(tm
         f"MOLESKINE-{start.strftime('%Y%m%dT%H%M%S')}{start.microsecond // 1000:03d}Z"
     )
 
+
+def test_load_closes_the_database_handle(tmp_path, monkeypatch):
+    """sqlite3's own context manager ends the transaction but leaves the
+    connection open, so a build would hold one file handle per recording."""
+    from focuswatch_dataset.adapters import moleskine
+
+    # Patch only after the fixture is written: write_fixture opens its own
+    # connection, and counting it here would measure the fixture, not load().
+    write_fixture(tmp_path)
+
+    opened = []
+    real_connect = sqlite3.connect
+
+    def recording_connect(*args, **kwargs):
+        connection = real_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(moleskine.sqlite3, "connect", recording_connect)
+
+    adapter = MoleskineAdapter()
+    adapter.load(adapter.discover(tmp_path)[0])
+
+    assert opened
+    for connection in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")

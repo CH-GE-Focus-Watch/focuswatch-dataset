@@ -8,6 +8,7 @@ synchronised, so the published alignment is deliberately ``overlap_only``.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
@@ -121,7 +122,9 @@ class MoleskineAdapter:
         start_ms = (start_ns + 999_999) // 1_000_000
         end_ms = end_ns // 1_000_000
         uri = f"{database.resolve().as_uri()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as connection:
+        # Why: closing(), not sqlite3's own context manager - the latter only
+        # ends the transaction and leaves the file handle open until GC.
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             raw = pd.read_sql_query(
                 """
                 SELECT d.date, d.drawType, d.pageX, d.pageY, d.penPressure, s.pageID
