@@ -23,3 +23,7 @@ focuswatch-selection-*/
 
 # IDE state - never part of a published code artefact
 .idea/
+
+# Local statistics notes and their generator are not published.
+docs/STATISTICS.md
+docs/stats.py
