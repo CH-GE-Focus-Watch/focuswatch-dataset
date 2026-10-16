@@ -149,6 +149,46 @@ Press `e` to export the selected recordings, `c` to copy the equivalent pandas
 query, `p` for provenance, and `q` to quit. Use `--export NEW/DIRECTORY` to
 choose a destination; existing directories are never overwritten.
 
+## Derive training labels
+
+The bundle publishes ground truth as recorded: pen contact events and observer
+intervals. `fw preprocess` turns them into per-sample labels in a new
+directory next to the bundle. Every choice is a parameter and is recorded in
+`preprocess.json`.
+
+```bash
+uv run fw preprocess --dataset PATH/TO/DATASET --task writing \
+  --gap-closing-s 3 --out labels-writing
+uv run fw preprocess --dataset PATH/TO/DATASET --task attention \
+  --out labels-attention
+```
+
+- `writing` adds `label_writing` to each watch table. A sample counts as
+  writing when the nearest pen event within 40 ms is a `PEN_DOWN` or
+  `PEN_MOVE`. Pauses up to `--gap-closing-s` between contacts then count as
+  writing. A pause at the very start or end of a recording is left alone.
+  `--gap-closing-s` has no default, because it defines what "writing" means.
+- `attention` adds `label_attention` (`focused` / `distracted`) to each head IMU
+  table from the observer interval that contains the sample.
+- Pen timestamps are joined as published (`--pen-shift-s 0`). Recordings with
+  `time_alignment = "overlap_only"` (Moleskine) are skipped for `writing`
+  unless `--include-overlap-only` is given, because their watch and pen clocks
+  are independent.
+- `--target-hz 50` labels the downsampled timeline; `--cohort` and
+  `--recording` restrict the selection.
+
+The same functions are available in Python:
+
+```python
+from focuswatch_dataset.preprocess import PreprocessConfig, preprocess_recordings
+
+config = PreprocessConfig(task="writing", gap_closing_s=3.0, target_hz=50.0)
+labelled = preprocess_recordings(root, ids, config)
+```
+
+The two label columns are never merged into one: writing and attention are
+different questions with different ground truth.
+
 ## Important limitations
 
 - Moleskine watch and pen streams use independent wall clocks. They are paired
