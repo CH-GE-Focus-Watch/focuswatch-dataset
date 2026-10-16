@@ -114,6 +114,18 @@ It also refuses motion tables whose sample rates differ by more than 10 %
 `allow_mixed_rates=True` or `allow_mixed_pen_units=True`; the loaded frame then
 carries a `sample_rate_hz` column or the two unit columns on every row.
 
+To combine 100 Hz and 50 Hz recordings, bring them to one rate while loading:
+
+```python
+watch = load_recordings(root, ids, modality="watch", target_hz=50)
+```
+
+Each recording is decimated with an anti-aliasing filter
+(`scipy.signal.decimate`, IIR, zero phase) before concatenation;
+`convert.downsample` does the same for a single table. Timestamps,
+quaternions and provenance columns keep real readings, and the published
+files are not changed.
+
 For interactive metadata filtering and subset export:
 
 ```bash
