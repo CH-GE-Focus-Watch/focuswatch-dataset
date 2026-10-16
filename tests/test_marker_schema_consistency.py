@@ -45,7 +45,7 @@ def test_canonical_marker_columns_and_dtypes_agree_across_cohorts(tmp_path):
 def test_task_index_is_null_not_a_sentinel_int_across_cohorts(tmp_path):
     """The concrete I15 bug: -1 looks like a valid index to a reuser filtering
     `task_index >= 0`, NaN cannot be. Every cohort's "not applicable" marker
-    row (the ETH pipelines never populate task_index; ml4scs does not either
+    row (the ZHAW pipelines never populate task_index; ml4scs does not either
     for structureless events) must publish NaN."""
     tables = _markers_tables(tmp_path)
     for cohort in ("ege", "sensorlogger"):

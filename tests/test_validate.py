@@ -133,14 +133,14 @@ def make_ege_like(n=3000, seed=7, still_fraction=0.2, roll_quaternion=False):
 
 
 def test_still_window_quaternion_check_runs_without_a_gravity_column():
-    findings = validate_motion_table(make_ege_like(), "ETH-EGE-T6", "watch", 100.0)
+    findings = validate_motion_table(make_ege_like(), "ZHAW-EGE-T6", "watch", 100.0)
     checks = {f.check for f in findings}
     assert "quat_still_agreement" in checks
     assert failed_checks(findings) == set()
 
 
 def test_still_window_check_catches_a_scalar_first_quaternion():
-    findings = validate_motion_table(make_ege_like(roll_quaternion=True), "ETH-EGE-T6", "watch", 100.0)
+    findings = validate_motion_table(make_ege_like(roll_quaternion=True), "ZHAW-EGE-T6", "watch", 100.0)
     assert "quat_still_agreement" in failed_checks(findings)
 
 

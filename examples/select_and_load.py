@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cohort",
-        help="select one cohort (for example, ML4SCS or ETH)",
+        help="select one cohort (for example, ML4SCS or ZHAW)",
     )
     parser.add_argument(
         "--require-pen",

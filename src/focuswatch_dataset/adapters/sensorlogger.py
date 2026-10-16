@@ -20,9 +20,9 @@ import pandas as pd
 from .. import schema as S
 from ..time_axis import sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
-from .eth_web import handedness_from_payload, redact_payload
+from .zhaw_web import handedness_from_payload, redact_payload
 
-COHORT = "ETH-SL"
+COHORT = "ZHAW-SL"
 
 _WRIST_SENSOR_NAME = "Wrist Motion"
 
@@ -80,7 +80,7 @@ class SensorLoggerAdapter:
         refs = []
         for d in sorted(p for p in root.iterdir() if (p / "WristMotion.csv").exists()):
             token = self._participant_token(d)
-            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ETH-{token}", "ETH", self.name, d))
+            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ZHAW-{token}", "ZHAW", self.name, d))
         return refs
 
     @classmethod
@@ -89,7 +89,7 @@ class SensorLoggerAdapter:
 
         Never parsed from the directory name - real directories carry
         session suffixes. Fails loudly rather than
-        falling back to a directory-name guess: the two ETH participant
+        falling back to a directory-name guess: the two ZHAW participant
         namespaces are disjoint, which only holds if the
         published token is the one the session itself states.
         """
@@ -166,7 +166,7 @@ class SensorLoggerAdapter:
                 ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
             },
             "time_alignment": "shared_clock",
-            "protocol_id": "eth_web", "study_mode": "study",
+            "protocol_id": "zhaw_web", "study_mode": "study",
             # Follows the export generation, not this pipeline
             # directory - genA (S3/T8/T9/T10) gets the same value as Ege's
             # own genA export; genB (E1/E2/E3) is kept distinct (see
@@ -179,7 +179,7 @@ class SensorLoggerAdapter:
             "session_start_ns": self._session_start_ns(metadata),
             # Promoted from a payload field to a
             # typed manifest column - nothing read it while watch_wrist_side
-            # published "unknown" for all 9 ETH recordings even though the
+            # published "unknown" for all 9 ZHAW recordings even though the
             # source states it.
             "handedness": handedness,
             # Internal-only (see manifest._INTERNAL_META_KEYS):
@@ -229,7 +229,7 @@ class SensorLoggerAdapter:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
         return json.loads(candidates[0].read_text())
 
-    # Both ETH pipelines share payload redaction and handedness extraction.
+    # Both ZHAW pipelines share payload redaction and handedness extraction.
     _redact_payload = staticmethod(redact_payload)
 
     @staticmethod
@@ -324,7 +324,7 @@ class SensorLoggerAdapter:
                 "event": [e["event"] for e in others],
                 # NaN, not -1, represents an inapplicable task index.
                 "task_id": "", "task_name": "", "task_index": np.nan,
-                "task_category": "", "protocol_id": "eth_web",
+                "task_category": "", "protocol_id": "zhaw_web",
                 # Allow-listed, not the raw payload: user_agent/
                 # screen/notes must never reach the public bundle.
                 "src_payload": [json.dumps(p) for p, _ in redacted],

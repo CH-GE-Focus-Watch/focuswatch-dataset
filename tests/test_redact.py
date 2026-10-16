@@ -49,7 +49,7 @@ def test_free_writing_without_markers_falls_back_to_all_xy():
 
 
 def test_markers_without_task_structure_also_fall_back():
-    # The ETH sources emit phase events with empty task ids. Matching nothing
+    # The ZHAW sources emit phase events with empty task ids. Matching nothing
     # would silently publish every coordinate under a redaction policy.
     structureless = pd.DataFrame({
         "t_ns": [5, 45], "event": ["session_start", "session_end"],

@@ -58,7 +58,7 @@ def apply_redaction(pen: pd.DataFrame, markers: pd.DataFrame | None,
     if not _has_task_structure(markers):
         # Why: an absent marker table and a marker table without task ids are the
         # same situation - we cannot tell free writing apart, so we do not guess.
-        # The ETH sources emit phase events without task ids and land here.
+        # The ZHAW sources emit phase events without task ids and land here.
         out[present] = np.nan
         return out
     mask = pd.Series(False, index=out.index)

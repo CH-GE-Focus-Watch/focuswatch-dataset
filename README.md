@@ -13,7 +13,7 @@ The current release candidate contains 75 recordings across four cohorts.
 | --- | ---: | --- |
 | ML4SCS | 33 | wrist IMU, Moleskine pen, task markers |
 | AIRPODS | 25 | head IMU, observer attention intervals |
-| ETH | 9 | wrist/head IMU, selected pen and marker streams |
+| ZHAW | 9 | wrist/head IMU, selected pen and marker streams |
 | MOLESKINE | 8 | watch accelerometer and Moleskine pen |
 
 `sessions.parquet` is the one-row-per-recording manifest.

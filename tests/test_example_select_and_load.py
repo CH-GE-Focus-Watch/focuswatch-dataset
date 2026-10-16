@@ -36,8 +36,8 @@ def test_documented_example_uses_safe_default_watch_semantics(synthetic_bundle):
 
     assert result.returncode == 0, result.stderr
     assert "ML4SCS-S096" in result.stdout
-    assert "ETH-SL-E2_session6" in result.stdout
-    assert "ETH-EGE-T6" not in result.stdout
+    assert "ZHAW-SL-E2_session6" in result.stdout
+    assert "ZHAW-EGE-T6" not in result.stdout
     assert "loaded" in result.stdout and "watch sample row(s)" in result.stdout
 
 

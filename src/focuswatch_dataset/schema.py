@@ -81,7 +81,7 @@ MOTION_MODALITIES = ("watch", "watch_rawaccel", "headimu")
 # stream. The threshold separates observed disconnected streams from fixtures.
 DROPOUT_COVERAGE_RATIO_MIN = 0.01
 
-# Shared ETH web-app event mappings. Export generation A uses `pen_dot` and
+# Shared ZHAW web-app event mappings. Export generation A uses `pen_dot` and
 # generation B uses `pen_move`; both adapters import these constants.
 PEN_EVENTS_GEN_A: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_dot": "PEN_MOVE", "pen_up": "PEN_UP"}
 PEN_EVENTS_GEN_B: dict[str, str] = {"pen_down": "PEN_DOWN", "pen_move": "PEN_MOVE", "pen_up": "PEN_UP"}
@@ -114,7 +114,7 @@ HANDEDNESS_VALUES = ("left", "right", "unknown")
 TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"
 # Why: not a clock reading at all - milliseconds SINCE session start, so no
 # wall-clock name would be honest. Emitted by every adapter that carries
-# `src_t_session_ms` (ML4SCS pen/markers, both ETH pipelines).
+# `src_t_session_ms` (ML4SCS pen/markers, both ZHAW pipelines).
 TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS = "session_relative_offset_ms"
 TIME_DOMAIN_PHONE_WALL_CLOCK = "phone_wall_clock"
 # Time-valued provenance columns name their own clock; other columns inherit

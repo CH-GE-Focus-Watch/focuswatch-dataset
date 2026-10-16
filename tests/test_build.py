@@ -71,7 +71,7 @@ def test_build_produces_all_expected_artefacts(tmp_path):
 def test_manifest_covers_every_cohort(tmp_path):
     out = tmp_path / "out"
     build_dataset(sources(tmp_path), out)
-    assert set(load_manifest(out)["cohort"]) == {"ML4SCS", "ETH", "AIRPODS", "MOLESKINE"}
+    assert set(load_manifest(out)["cohort"]) == {"ML4SCS", "ZHAW", "AIRPODS", "MOLESKINE"}
 
 
 def test_build_is_deterministic(tmp_path):
@@ -924,7 +924,7 @@ def test_cli_report(tmp_path, capsys):
     printed = capsys.readouterr().out
     assert "recordings" in printed
     assert "participant identifiers" in printed
-    for cohort in ("ML4SCS", "ETH", "AIRPODS", "MOLESKINE"):
+    for cohort in ("ML4SCS", "ZHAW", "AIRPODS", "MOLESKINE"):
         assert cohort in printed
 
 
@@ -1007,7 +1007,7 @@ def test_cli_validate_ignores_a_corrupt_historical_report(tmp_path, capsys):
 
 
 def test_annotation_tables_publish_one_schema_across_cohorts(tmp_path):
-    """I15: markers arrived with two shapes - ML4SCS had seven columns, ETH nine
+    """I15: markers arrived with two shapes - ML4SCS had seven columns, ZHAW nine
     (`src_payload`, `src_t_session_ms`), and `task_index` was float64 with NaN in
     one cohort and int64 with a -1 sentinel in the other. A reuser concatenating
     them got a ragged frame in which `task_index >= 0` filtered differently per
@@ -1045,7 +1045,7 @@ _FRICTIONLESS_NAME = re.compile(r"^[a-z0-9._-]+$")
 
 
 def test_datapackage_resource_names_are_valid_frictionless_slugs(tmp_path):
-    """Resource names were `f"{modality}/{f.stem}"` -> e.g. "watch/ETH-EGE-T6",
+    """Resource names were `f"{modality}/{f.stem}"` -> e.g. "watch/ZHAW-EGE-T6",
     invalid twice over: the "/" and the upper case. The Frictionless spec
     allows lowercase alphanumeric plus `.`, `-`, `_` only.
     """
