@@ -93,7 +93,9 @@ from focuswatch_dataset import load_manifest, load_recordings
 
 root = "PATH/TO/DATASET"
 manifest = load_manifest(root)
-selected = manifest.query("has_watch and has_pen and accel_semantics == 'user'")
+selected = manifest.query(
+    "has_watch and has_pen and accel_semantics == 'user' and watch_hz_nominal == 100"
+)
 watch = load_recordings(
     root,
     selected["recording_id"].head(10).tolist(),
@@ -105,6 +107,12 @@ watch = load_recordings(
 When total acceleration has a quaternion, `to_user_acceleration` can derive
 gravity-removed acceleration; without orientation, the conversion is not
 possible and the package does not guess.
+
+It also refuses motion tables whose sample rates differ by more than 10 %
+(native rates are never resampled), and pen tables whose `pen_xy_unit` or
+`pen_pressure_scale` differ. For per-recording processing, pass
+`allow_mixed_rates=True` or `allow_mixed_pen_units=True`; the loaded frame then
+carries a `sample_rate_hz` column or the two unit columns on every row.
 
 For interactive metadata filtering and subset export:
 
