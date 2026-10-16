@@ -11,7 +11,9 @@ from pathlib import Path
 import re
 
 import pandas as pd
+from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
@@ -28,7 +30,14 @@ from textual.widgets import (
     TabPane,
 )
 
-from .explore import FACETS, ExplorerSelection, export_preview, export_selected_recordings
+from .explore import (
+    FACETS,
+    PRESETS,
+    ExplorerSelection,
+    export_preview,
+    export_selected_recordings,
+    watch_rate_summary,
+)
 from .load import load_manifest
 
 
@@ -51,11 +60,30 @@ _DEVICE_LABELS = (
 
 # Which facet groups each assistant step shows, in registry order.
 _STEPS = (
-    ("data", "1 Choose data", ("Cohort", "Modalities")),
+    ("data", "1 Choose data", ("Modalities", "Cohort")),
     ("signals", "2 Signals & timing", ("Signals", "Acquisition", "Timing")),
 )
 
 _EXPORT_RATE_HZ = 50.0
+
+# One colour per cohort so mixed selections read at a glance in the preview.
+_COHORT_STYLES = {
+    "ML4SCS": "bold cyan",
+    "ZHAW": "bold magenta",
+    "AIRPODS": "bold green",
+    "MOLESKINE": "bold yellow",
+}
+
+
+class FacetList(VerticalScroll):
+    """Facet column where the arrow keys move between filters."""
+
+    # Why: VerticalScroll binds up/down to scrolling, which would leave the
+    # focused checkbox behind; moving focus scrolls it into view instead.
+    BINDINGS = [
+        Binding("down", "app.focus_next", "Next filter", show=False),
+        Binding("up", "app.focus_previous", "Previous filter", show=False),
+    ]
 
 
 def _natural_key(value: object) -> tuple[object, ...]:
@@ -123,12 +151,17 @@ class DatasetExplorerApp(App[None]):
     ]
     CSS = """
     Screen { layout: vertical; }
-    #summary { height: auto; padding: 0 1; background: $panel; }
-    #recording-count { text-style: bold; }
+    #summary { height: auto; padding: 0 2; background: $boost; border-bottom: hkey $primary; }
+    #recording-count { text-style: bold; color: $accent; }
     #query { color: $text-muted; }
     #workspace { height: 1fr; }
-    #steps { width: 46; border-right: solid $primary; }
-    #results { width: 1fr; padding: 0 1; }
+    #steps { width: 48; border: round $primary; border-title-color: $accent; }
+    #results { width: 1fr; padding: 0 1; border: round $primary-darken-2; border-title-color: $accent; }
+    #presets { height: 1; }
+    /* One-line buttons keep the facets below them on a 24-row terminal. */
+    #presets Button { height: 1; min-width: 10; border: none; margin-right: 1; }
+    #preset-hint { color: $text-muted; height: auto; }
+    #rate-info { color: $text-muted; height: auto; margin-bottom: 1; }
     .group-title { margin-top: 1; text-style: bold; color: $accent; }
     .facet-row { height: 1; }
     .facet-row Checkbox { border: none; padding: 0; height: 1; width: 1fr; background: transparent; }
@@ -174,7 +207,13 @@ class DatasetExplorerApp(App[None]):
                             if step_id != "data":
                                 yield Button("← Back", id=f"back-{step_id}")
                             yield Button("Next →", id=f"next-{step_id}", variant="primary")
-                        with VerticalScroll():
+                        with FacetList():
+                            if step_id == "data":
+                                yield Static("Goal", classes="group-title")
+                                with Horizontal(id="presets"):
+                                    for preset_id, preset in PRESETS.items():
+                                        yield Button(preset.label, id=f"preset-{preset_id}")
+                                yield Static("Pick a goal, then refine below.", id="preset-hint")
                             yield from self._facet_rows(groups)
                 with TabPane("3 Export", id="export"):
                     with Horizontal(classes="step-nav"):
@@ -182,6 +221,7 @@ class DatasetExplorerApp(App[None]):
                         yield Button("Export", id="export-button", variant="success")
                     with VerticalScroll():
                         yield Static(id="export-files")
+                        yield Static(id="rate-info")
                         with RadioSet(id="watch-rate"):
                             yield RadioButton("Keep native rates", id="rate-native", value=True)
                             yield RadioButton(
@@ -208,6 +248,9 @@ class DatasetExplorerApp(App[None]):
                     yield Static(id=f"count-{facet_id}", classes="facet-count")
 
     def on_mount(self) -> None:
+        self.theme = "tokyo-night"
+        self.query_one("#steps").border_title = "Select"
+        self.query_one("#results").border_title = "Preview"
         # Short columns first: long ZHAW recording ids must not push them off screen.
         self.query_one("#preview", DataTable).add_columns(
             "Recording ID", "Duration", "Hz", "Devices", "Participant"
@@ -224,9 +267,20 @@ class DatasetExplorerApp(App[None]):
         order = [step_id for step_id, _, _ in _STEPS] + ["export"]
         if button == "export-button":
             self.action_export()
+        elif button.startswith("preset-"):
+            self.apply_preset(button.removeprefix("preset-"))
         elif button.startswith(("next-", "back-")):
             current = order.index(button.split("-", 1)[1])
             self.action_step(order[current + (1 if button.startswith("next-") else -1)])
+
+    def apply_preset(self, preset_id: str) -> None:
+        preset = PRESETS[preset_id]
+        with self.prevent(Checkbox.Changed):
+            for facet_id in FACETS:
+                checkbox = self.query_one(f"#facet-{facet_id}", Checkbox)
+                checkbox.value = facet_id in preset.facets and facet_id in self.available
+        self.query_one("#preset-hint", Static).update(f"{preset.label}: {preset.description}")
+        self._refresh_selection()
 
     def action_step(self, step_id: str) -> None:
         self.query_one("#steps", TabbedContent).active = step_id
@@ -299,15 +353,38 @@ class DatasetExplorerApp(App[None]):
         if "recording_id" in rows:
             rows = rows.sort_values("recording_id", key=lambda s: s.map(_natural_key))
         for _, row in rows.iterrows():
+            # Why: the id already names its cohort; colour shows it without
+            # surfacing the raw cohort field, which stays in Provenance.
+            style = _COHORT_STYLES.get(str(row.get("cohort", "")), "")
             table.add_row(
-                str(row.get("recording_id", "")),
+                Text(str(row.get("recording_id", "")), style=style),
                 _format_duration(row.get("duration_s")),
                 self._rate(row),
                 self._devices(row),
                 str(row.get("participant_id", "")),
             )
 
+    def _redraw_rate_info(self) -> None:
+        counts, above = watch_rate_summary(self.selected, _EXPORT_RATE_HZ)
+        info = self.query_one("#rate-info", Static)
+        option = self.query_one("#rate-target", RadioButton)
+        option.disabled = above == 0
+        if above == 0 and option.value:
+            self.query_one("#rate-native", RadioButton).value = True
+        if not counts:
+            info.update("No watch data in this selection.")
+            return
+        rates = " · ".join(f"{n} × {hz} Hz" for hz, n in counts.items())
+        if above == 0:
+            info.update(f"Watch rates: {rates}\nAlready at {_EXPORT_RATE_HZ:g} Hz or below; nothing to downsample.")
+        else:
+            copied = sum(counts.values()) - above
+            info.update(
+                f"Watch rates: {rates}\nAt {_EXPORT_RATE_HZ:g} Hz: {above} downsampled, {copied} copied as they are."
+            )
+
     def _redraw_export_files(self) -> None:
+        self._redraw_rate_info()
         target = self.query_one("#export-files", Static)
         if self.selected.empty:
             target.update("Nothing selected yet.")

@@ -251,6 +251,10 @@ def test_export_step_can_bring_the_watch_to_50_hz(tmp_path):
     from focuswatch_dataset.write import write_table
 
     root = build_manifest(tmp_path)
+    # A real manifest declares the measured rate the export step reads.
+    manifest = pd.read_parquet(root / "sessions.parquet")
+    manifest["watch_hz_measured"] = [100.0, 50.0, None]
+    manifest.to_parquet(root / "sessions.parquet", index=False)
     t = np.arange(200) / 100.0
     write_table(pd.DataFrame({"t_ns": (t * 1e9).astype(np.int64),
                               "accel_user_x": np.sin(2 * np.pi * t)}),
@@ -277,3 +281,67 @@ def test_export_step_can_bring_the_watch_to_50_hz(tmp_path):
     payload = json.loads((destination / "selection.json").read_text(encoding="utf-8"))
     assert payload["watch_resampled_to_hz"] == 50.0
     assert len(pd.read_parquet(destination / "watch" / "A.parquet")) == 100
+
+
+def test_export_step_explains_rates_and_disables_a_pointless_downsample(tmp_path):
+    root = build_manifest(tmp_path)
+    manifest = pd.read_parquet(root / "sessions.parquet")
+    manifest["watch_hz_measured"] = [100.0, 50.0, None]
+    manifest.to_parquet(root / "sessions.parquet", index=False)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test() as pilot:
+            def info():
+                return str(app.query_one("#rate-info", Static).render())
+
+            assert "1 × 50 Hz · 1 × 100 Hz" in info()
+            assert "1 downsampled, 1 copied" in info()
+            assert not app.query_one("#rate-target").disabled
+
+            app.query_one("#facet-observer_annotation", Checkbox).value = True
+            await pilot.pause()
+            assert "nothing to downsample" in info()
+            assert app.query_one("#rate-target").disabled
+
+    asyncio.run(scenario())
+
+
+def test_goal_presets_set_the_matching_facets(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test() as pilot:
+            await pilot.click("#preset-writing_detection")
+            await pilot.pause()
+            assert app.selection.query == "has_watch and has_pen"
+            assert "1 of 3 recording " in count_text(app)
+
+            await pilot.click("#preset-attention")
+            await pilot.pause()
+            assert app.selection.query == "has_headimu and has_attention"
+            assert not app.query_one("#facet-smartwatch", Checkbox).value
+
+            await pilot.click("#preset-everything")
+            await pilot.pause()
+            assert "3 of 3 recordings" in count_text(app)
+
+    asyncio.run(scenario())
+
+
+def test_arrow_keys_move_between_filters(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test() as pilot:
+            app.query_one("#facet-smartwatch", Checkbox).focus()
+            await pilot.press("down")
+            assert app.focused.id == "facet-head_imu"
+            await pilot.press("space")
+            assert app.query_one("#facet-head_imu", Checkbox).value
+            await pilot.press("up")
+            assert app.focused.id == "facet-smartwatch"
+
+    asyncio.run(scenario())
