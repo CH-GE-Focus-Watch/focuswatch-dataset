@@ -1,6 +1,7 @@
 import json
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -373,3 +374,67 @@ def test_exporting_observer_labels_includes_the_head_imu_they_label(tmp_path):
     assert (out / "headimu" / "H.parquet").is_file()
     assert (out / "attention" / "H.parquet").is_file()
     assert json.loads((out / "selection.json").read_text())["modalities"] == ["headimu", "attention"]
+
+
+def _write_rate_bundle(root, rates, n=200):
+    from focuswatch_dataset.write import write_table
+
+    root.mkdir()
+    rows, channels = [], []
+    for rid, hz in rates.items():
+        t = np.arange(n) / hz
+        table = pd.DataFrame({"t_ns": (t * 1e9).astype(np.int64),
+                              "accel_user_x": np.sin(2 * np.pi * t)})
+        write_table(table, root / "watch" / f"{rid}.parquet", rid)
+        pen = pd.DataFrame({"t_ns": np.arange(3, dtype=np.int64), "x": np.zeros(3)})
+        write_table(pen, root / "pen" / f"{rid}.parquet", rid)
+        rows.append({"recording_id": rid, "has_watch": True, "has_pen": True,
+                     "watch_hz_nominal": hz, "watch_hz_measured": hz, "n_samples_watch": n})
+        channels += [
+            {"recording_id": rid, "modality": "watch", "column": "accel_user_x", "sample_rate_hz": hz},
+            {"recording_id": rid, "modality": "pen", "column": "x", "sample_rate_hz": None},
+        ]
+    manifest = pd.DataFrame(rows)
+    manifest.to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame(channels).to_parquet(root / "channels.parquet", index=False)
+    return manifest
+
+
+def test_export_can_bring_the_watch_to_one_rate(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_rate_bundle(root, {"F": 100.0, "S": 50.0})
+
+    out = export_selected_recordings(
+        root, manifest, {"smartwatch": True, "digital_pen": True}, tmp_path / "at-50",
+        watch_target_hz=50.0,
+    )
+
+    assert len(pd.read_parquet(out / "watch" / "F.parquet")) == 100
+    assert (out / "watch" / "S.parquet").read_bytes() == (root / "watch" / "S.parquet").read_bytes()
+    assert (out / "pen" / "F.parquet").read_bytes() == (root / "pen" / "F.parquet").read_bytes()
+    subset = pd.read_parquet(out / "sessions.parquet").set_index("recording_id")
+    assert subset.loc["F", ["watch_hz_measured", "n_samples_watch"]].tolist() == [50.0, 100]
+    channels = pd.read_parquet(out / "channels.parquet")
+    assert set(channels.loc[channels["modality"] == "watch", "sample_rate_hz"]) == {50.0}
+    assert json.loads((out / "selection.json").read_text())["watch_resampled_to_hz"] == 50.0
+
+
+def test_export_without_target_rate_stays_a_byte_copy(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_rate_bundle(root, {"F": 100.0})
+
+    out = export_selected_recordings(root, manifest, {"smartwatch": True}, tmp_path / "native")
+
+    assert (out / "watch" / "F.parquet").read_bytes() == (root / "watch" / "F.parquet").read_bytes()
+    assert "watch_resampled_to_hz" not in json.loads((out / "selection.json").read_text())
+
+
+def test_export_refuses_an_impossible_target_rate_before_writing(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_rate_bundle(root, {"S": 50.0})
+    destination = tmp_path / "at-100"
+
+    with pytest.raises(ValueError, match="upsampling is not supported"):
+        export_selected_recordings(root, manifest, {"smartwatch": True}, destination,
+                                   watch_target_hz=100.0)
+    assert not destination.exists()
