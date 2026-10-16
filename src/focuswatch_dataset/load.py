@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import schema as S
+from .convert import downsample
 from .write import read_table
 
 # Why: native rates stay native (no resampling), so concatenating a 50 Hz and
@@ -89,6 +90,7 @@ def _group_ids(values: pd.Series) -> dict[object, list[str]]:
 
 def load_recordings(root: Path | str, recording_ids: list[str],
                     modality: str = "watch", *,
+                    target_hz: float | None = None,
                     allow_mixed_rates: bool = False,
                     allow_mixed_pen_units: bool = False) -> pd.DataFrame:
     """Concatenate several recordings' tables, tagging each row with `recording_id`.
@@ -110,6 +112,11 @@ def load_recordings(root: Path | str, recording_ids: list[str],
     `allow_mixed_rates=True` adds a `sample_rate_hz` column and
     `allow_mixed_pen_units=True` adds the two unit columns, so the
     information travels with every row instead of being lost in the concat.
+
+    `target_hz` instead brings every recording of a motion modality to one
+    rate before concatenating, via `convert.downsample` (so 100 Hz and 50 Hz
+    watch sessions can be combined at 50 Hz), and adds `sample_rate_hz`.
+    The published tables are not changed; only the returned frame is.
     """
     root = Path(root)
     if not recording_ids:
@@ -145,7 +152,19 @@ def load_recordings(root: Path | str, recording_ids: list[str],
             )
 
     rates = _sample_rates(root, unique_ids, modality) if modality in S.MOTION_MODALITIES else None
-    if rates is not None and not allow_mixed_rates:
+    if target_hz is not None:
+        if modality not in S.MOTION_MODALITIES:
+            raise ValueError(
+                f"target_hz applies to the motion modalities {S.MOTION_MODALITIES}, "
+                f"not {modality!r}"
+            )
+        if rates is None or rates.isna().any():
+            unknown = unique_ids if rates is None else sorted(rates[rates.isna()].index)
+            raise ValueError(
+                f"target_hz needs each recording's {modality} rate from "
+                f"channels.parquet; none is declared for {unknown}"
+            )
+    elif rates is not None and not allow_mixed_rates:
         measured = rates.dropna()
         if len(measured) > 1 and measured.max() / measured.min() > MAX_RATE_SPREAD:
             raise ValueError(
@@ -168,8 +187,12 @@ def load_recordings(root: Path | str, recording_ids: list[str],
     frames = []
     for rid in recording_ids:
         df = load_recording(root, rid, modality)
+        if target_hz is not None:
+            df = downsample(df, rates[rid], target_hz)
         df.insert(0, "recording_id", rid)
-        if allow_mixed_rates and rates is not None:
+        if target_hz is not None:
+            df.insert(1, "sample_rate_hz", float(target_hz))
+        elif allow_mixed_rates and rates is not None:
             df.insert(1, "sample_rate_hz", rates[rid])
         if allow_mixed_pen_units and pen_units is not None:
             for position, field in enumerate(pen_units.columns, start=1):

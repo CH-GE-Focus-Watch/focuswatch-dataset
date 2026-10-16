@@ -1,4 +1,9 @@
-"""Optional Textual interface for exploring manifest metadata."""
+"""Optional Textual interface for exploring manifest metadata.
+
+The explorer is a three-step assistant: choose data, narrow by signals and
+timing, then export. The recording preview on the right stays visible in
+every step.
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,11 +12,23 @@ import re
 
 import pandas as pd
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Checkbox, DataTable, Footer, Header, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    RadioButton,
+    RadioSet,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
-from .explore import FACETS, ExplorerSelection, export_selected_recordings
+from .explore import FACETS, ExplorerSelection, export_preview, export_selected_recordings
 from .load import load_manifest
 
 
@@ -26,11 +43,19 @@ _PROVENANCE_COLUMNS = (
 
 # Plain-language device labels shared by the breakdown line and the preview.
 _DEVICE_LABELS = (
-    ("has_watch", "Smartwatch"),
-    ("has_headimu", "Head IMU"),
-    ("has_pen", "Pen"),
-    ("has_attention", "Annotation"),
+    ("has_watch", "Smartwatch", "W"),
+    ("has_headimu", "Head IMU", "H"),
+    ("has_pen", "Pen", "P"),
+    ("has_attention", "Annotation", "A"),
 )
+
+# Which facet groups each assistant step shows, in registry order.
+_STEPS = (
+    ("data", "1 Choose data", ("Cohort", "Modalities")),
+    ("signals", "2 Signals & timing", ("Signals", "Acquisition", "Timing")),
+)
+
+_EXPORT_RATE_HZ = 50.0
 
 
 def _natural_key(value: object) -> tuple[object, ...]:
@@ -43,9 +68,17 @@ def _natural_key(value: object) -> tuple[object, ...]:
 def _format_duration(seconds: object) -> str:
     if seconds is None or pd.isna(seconds):
         return "–"
-    total = int(round(float(seconds)))
-    minutes, secs = divmod(total, 60)
-    return f"{minutes:d}:{secs:02d} min"
+    hours, rest = divmod(int(round(float(seconds))), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours:d}:{minutes:02d}:{secs:02d}"
+
+
+def _format_bytes(size: int) -> str:
+    for unit in ("B", "KB", "MB"):
+        if size < 1024:
+            return f"{size:.0f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
 
 
 class ProvenanceScreen(ModalScreen[None]):
@@ -77,8 +110,11 @@ class DatasetExplorerApp(App[None]):
     """Select recordings using user-facing facets over sessions.parquet."""
 
     TITLE = "FocusWatch Dataset Explorer"
-    SUB_TITLE = "Metadata selection over sessions.parquet"
+    SUB_TITLE = "Choose data · narrow · export"
     BINDINGS = [
+        ("1", "step('data')", "Data"),
+        ("2", "step('signals')", "Signals"),
+        ("3", "step('export')", "Export step"),
         ("e", "export", "Export"),
         ("c", "copy_query", "Copy query"),
         ("r", "reset", "Reset"),
@@ -87,14 +123,25 @@ class DatasetExplorerApp(App[None]):
     ]
     CSS = """
     Screen { layout: vertical; }
+    #summary { height: auto; padding: 0 1; background: $panel; }
+    #recording-count { text-style: bold; }
+    #query { color: $text-muted; }
     #workspace { height: 1fr; }
-    #facets { width: 40; padding: 0 1; border-right: solid $primary; }
+    #steps { width: 46; border-right: solid $primary; }
     #results { width: 1fr; padding: 0 1; }
     .group-title { margin-top: 1; text-style: bold; color: $accent; }
-    #recording-count { text-style: bold; margin-top: 1; }
-    #breakdown { height: auto; }
-    #query { height: auto; color: $text-muted; margin-bottom: 1; }
+    .facet-row { height: 1; }
+    .facet-row Checkbox { border: none; padding: 0; height: 1; width: 1fr; background: transparent; }
+    .facet-row Checkbox:focus { border: none; text-style: bold; }
+    .facet-count { width: 6; text-align: right; color: $text-muted; }
+    /* Docked so Back/Next/Export stay reachable on short terminals. */
+    .step-nav { dock: bottom; height: auto; padding-top: 1; }
+    .step-nav Button { margin-right: 1; min-width: 12; }
+    #breakdown { height: auto; color: $text-muted; }
     #preview { height: 1fr; }
+    #export-files { height: auto; margin: 1 0; }
+    #watch-rate { height: auto; margin-bottom: 1; }
+    #destination { margin-bottom: 1; }
     ProvenanceScreen { align: center middle; }
     ProvenanceScreen > #details-title { width: 90%; height: 3; padding: 1; background: $panel; text-style: bold; }
     ProvenanceScreen > #provenance-table { width: 90%; height: 75%; background: $surface; }
@@ -107,32 +154,86 @@ class DatasetExplorerApp(App[None]):
         self.export_path = Path(export_path) if export_path is not None else None
         self.selection = ExplorerSelection()
         self.selected = self.manifest.copy().reset_index(drop=True)
+        # Why: a bundle built before a facet's manifest column existed must
+        # still open; such facets are shown disabled instead of crashing.
+        self.available = {
+            facet_id for facet_id, facet in FACETS.items()
+            if facet.condition[0] in self.manifest.columns
+        }
 
     def compose(self) -> ComposeResult:
         yield Header()
+        with Vertical(id="summary"):
+            yield Static(id="recording-count")
+            yield Static(id="query")
         with Horizontal(id="workspace"):
-            with ScrollableContainer(id="facets"):
-                current_group = None
-                for facet_id, facet in FACETS.items():
-                    if facet.group != current_group:
-                        current_group = facet.group
-                        yield Static(current_group, classes="group-title")
-                    yield Checkbox(facet.label, id=f"facet-{facet_id}")
+            with TabbedContent(id="steps"):
+                for step_id, title, groups in _STEPS:
+                    with TabPane(title, id=step_id):
+                        with Horizontal(classes="step-nav"):
+                            if step_id != "data":
+                                yield Button("← Back", id=f"back-{step_id}")
+                            yield Button("Next →", id=f"next-{step_id}", variant="primary")
+                        with VerticalScroll():
+                            yield from self._facet_rows(groups)
+                with TabPane("3 Export", id="export"):
+                    with Horizontal(classes="step-nav"):
+                        yield Button("← Back", id="back-export")
+                        yield Button("Export", id="export-button", variant="success")
+                    with VerticalScroll():
+                        yield Static(id="export-files")
+                        with RadioSet(id="watch-rate"):
+                            yield RadioButton("Keep native rates", id="rate-native", value=True)
+                            yield RadioButton(
+                                f"Bring watch to {_EXPORT_RATE_HZ:g} Hz", id="rate-target"
+                            )
+                        yield Static("Destination")
+                        yield Input(id="destination")
             with Vertical(id="results"):
-                yield Static(id="recording-count")
                 yield Static(id="breakdown")
-                yield Static(id="query")
                 yield DataTable(id="preview", cursor_type="row", zebra_stripes=True)
         yield Footer()
 
+    def _facet_rows(self, groups: tuple[str, ...]) -> ComposeResult:
+        for group in groups:
+            yield Static(group, classes="group-title")
+            for facet_id, facet in FACETS.items():
+                if facet.group != group:
+                    continue
+                with Horizontal(classes="facet-row"):
+                    yield Checkbox(
+                        facet.label, id=f"facet-{facet_id}",
+                        disabled=facet_id not in self.available,
+                    )
+                    yield Static(id=f"count-{facet_id}", classes="facet-count")
+
     def on_mount(self) -> None:
+        # Short columns first: long ZHAW recording ids must not push them off screen.
         self.query_one("#preview", DataTable).add_columns(
-            "Recording ID", "Participant", "Duration", "Modalities"
+            "Recording ID", "Duration", "Hz", "Devices", "Participant"
         )
+        destination = self.export_path or _default_export_directory()
+        self.query_one("#destination", Input).value = str(destination)
         self._refresh_selection()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         self._refresh_selection()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button = event.button.id or ""
+        order = [step_id for step_id, _, _ in _STEPS] + ["export"]
+        if button == "export-button":
+            self.action_export()
+        elif button.startswith(("next-", "back-")):
+            current = order.index(button.split("-", 1)[1])
+            self.action_step(order[current + (1 if button.startswith("next-") else -1)])
+
+    def action_step(self, step_id: str) -> None:
+        self.query_one("#steps", TabbedContent).active = step_id
+        # Why: TabbedContent re-activates the pane holding the focused widget,
+        # so focus left on the old step's button would switch straight back.
+        primary = "#export-button" if step_id == "export" else f"#next-{step_id}"
+        self.query_one(primary, Button).focus()
 
     def _active_facets(self) -> dict[str, bool]:
         return {
@@ -141,32 +242,55 @@ class DatasetExplorerApp(App[None]):
         }
 
     def _refresh_selection(self) -> None:
-        self.selection = ExplorerSelection.from_mapping(self._active_facets())
+        active = self._active_facets()
+        self.selection = ExplorerSelection.from_mapping(active)
         self.selected = self.selection.filter(self.manifest)
+        self.query_one("#recording-count", Static).update(self._summary_text())
+        self.query_one("#query", Static).update(f"query: {self.selection.query}")
+        self.query_one("#breakdown", Static).update(self._breakdown_text())
+        for facet_id in FACETS:
+            count = "–"
+            if facet_id in self.available:
+                with_facet = ExplorerSelection.from_mapping({**active, facet_id: True})
+                count = str(with_facet.count(self.manifest))
+            self.query_one(f"#count-{facet_id}", Static).update(count)
+        self._redraw_preview()
+        self._redraw_export_files()
+
+    def _summary_text(self) -> str:
         count, total = len(self.selected), len(self.manifest)
         noun = "recording" if count == 1 else "recordings"
-        self.query_one("#recording-count", Static).update(
-            f"{count} of {total} {noun} selected"
-        )
-        self.query_one("#breakdown", Static).update(self._breakdown_text())
-        self.query_one("#query", Static).update(f"query: {self.selection.query}")
-        self._redraw_preview()
+        parts = [f"{count} of {total} {noun} selected"]
+        if "duration_s" in self.selected:
+            parts.append(f"{self.selected['duration_s'].fillna(0).sum() / 3600:.1f} h")
+        if "cohort" in self.selected:
+            cohorts = self.selected["cohort"].nunique()
+            parts.append(f"{cohorts} cohort" + ("" if cohorts == 1 else "s"))
+        return " · ".join(parts)
 
     def _breakdown_text(self) -> str:
         parts = [
             f"{label}: {int(self.selected[column].fillna(False).astype(bool).sum())}"
-            for column, label in _DEVICE_LABELS
+            for column, label, _ in _DEVICE_LABELS
             if column in self.selected
         ]
         return "  ·  ".join(parts) if parts else "No device flags in manifest"
 
     @staticmethod
     def _devices(row: pd.Series) -> str:
-        return ", ".join(
-            label
-            for column, label in _DEVICE_LABELS
+        return " ".join(
+            short
+            for column, _, short in _DEVICE_LABELS
             if column in row and bool(row[column])
         ) or "–"
+
+    @staticmethod
+    def _rate(row: pd.Series) -> str:
+        for column in ("watch_hz_measured", "head_hz_measured"):
+            value = row.get(column)
+            if value is not None and pd.notna(value):
+                return f"{float(value):.0f}"
+        return "–"
 
     def _redraw_preview(self) -> None:
         table = self.query_one("#preview", DataTable)
@@ -177,16 +301,38 @@ class DatasetExplorerApp(App[None]):
         for _, row in rows.iterrows():
             table.add_row(
                 str(row.get("recording_id", "")),
-                str(row.get("participant_id", "")),
                 _format_duration(row.get("duration_s")),
+                self._rate(row),
                 self._devices(row),
+                str(row.get("participant_id", "")),
             )
 
+    def _redraw_export_files(self) -> None:
+        target = self.query_one("#export-files", Static)
+        if self.selected.empty:
+            target.update("Nothing selected yet.")
+            return
+        try:
+            preview = export_preview(self.root, self.manifest, self.selection)
+        except FileNotFoundError as exc:
+            target.update(f"Cannot export: {exc}")
+            return
+        lines = [f"{modality:<10} {files:>3} files  {_format_bytes(size):>9}"
+                 for modality, (files, size) in preview.items()]
+        total = sum(size for _, size in preview.values())
+        lines.append(f"{'total':<10} {'':>9}  {_format_bytes(total):>9}")
+        lines.append("Always included: sessions.parquet · channels.parquet · selection.json")
+        target.update("\n".join(lines))
+
     def action_export(self) -> None:
-        destination = self.export_path or _default_export_directory()
+        destination = Path(self.query_one("#destination", Input).value).expanduser()
+        target_hz = (
+            _EXPORT_RATE_HZ if self.query_one("#rate-target", RadioButton).value else None
+        )
         try:
             written = export_selected_recordings(
-                self.root, self.manifest, self.selection, destination
+                self.root, self.manifest, self.selection, destination,
+                watch_target_hz=target_hz,
             )
         except Exception as exc:
             self.notify(f"Export failed: {exc}", severity="error")
@@ -198,8 +344,9 @@ class DatasetExplorerApp(App[None]):
         self.notify("pandas query copied to clipboard")
 
     def action_reset(self) -> None:
-        for checkbox in self.query(Checkbox):
-            checkbox.value = False
+        with self.prevent(Checkbox.Changed):
+            for checkbox in self.query(Checkbox):
+                checkbox.value = False
         self._refresh_selection()
 
     def action_provenance(self) -> None:

@@ -114,11 +114,30 @@ It also refuses motion tables whose sample rates differ by more than 10 %
 `allow_mixed_rates=True` or `allow_mixed_pen_units=True`; the loaded frame then
 carries a `sample_rate_hz` column or the two unit columns on every row.
 
+To combine 100 Hz and 50 Hz recordings, bring them to one rate while loading:
+
+```python
+watch = load_recordings(root, ids, modality="watch", target_hz=50)
+```
+
+Each recording is decimated with an anti-aliasing filter
+(`scipy.signal.decimate`, IIR, zero phase) before concatenation;
+`convert.downsample` does the same for a single table. Timestamps,
+quaternions and provenance columns keep real readings, and the published
+files are not changed.
+
 For interactive metadata filtering and subset export:
 
 ```bash
 uv run fw explore PATH/TO/DATASET
 ```
+
+The explorer is a three-step assistant: choose cohorts and devices, narrow by
+signals, rates and timing, then export. Each filter shows how many recordings
+it would leave, and the recording preview stays visible in every step. The
+export step lists the files and their size, and can bring the watch to 50 Hz
+(see `target_hz` above) instead of copying it at its native rate. Press `1`,
+`2`, `3` to switch steps.
 
 Filters on the same manifest field are alternatives (two cohorts select
 either), filters on different fields narrow each other. "Shared clock across

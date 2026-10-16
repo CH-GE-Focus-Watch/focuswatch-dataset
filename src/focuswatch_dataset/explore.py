@@ -11,6 +11,8 @@ from typing import Mapping
 import pandas as pd
 
 from . import schema as S
+from .convert import decimation_factor, downsample
+from .write import read_table, write_table
 
 
 @dataclass(frozen=True)
@@ -215,6 +217,7 @@ def _write_selection_json(
     query: str,
     *,
     modalities: tuple[str, ...] | None = None,
+    watch_resampled_to_hz: float | None = None,
 ) -> None:
     rows = json.loads(selected.to_json(orient="records"))
     payload: dict[str, object] = {
@@ -224,6 +227,8 @@ def _write_selection_json(
     }
     if modalities is not None:
         payload["modalities"] = list(modalities)
+    if watch_resampled_to_hz is not None:
+        payload["watch_resampled_to_hz"] = watch_resampled_to_hz
     destination.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -298,13 +303,53 @@ def _subset_manifest(
     return subset
 
 
+def export_preview(
+    root: Path | str,
+    manifest: pd.DataFrame,
+    selection: ExplorerSelection | Mapping[str, bool],
+) -> dict[str, tuple[int, int]]:
+    """Files and bytes per modality that `export_selected_recordings` would copy."""
+
+    selected = filter_manifest(manifest, selection)
+    preview: dict[str, tuple[int, int]] = {}
+    for source, relative in _copy_plan(Path(root), selected, _selected_modalities(selected, selection)):
+        modality = relative.parts[0]
+        files, size = preview.get(modality, (0, 0))
+        preview[modality] = (files + 1, size + source.stat().st_size)
+    return preview
+
+
+def _watch_factors(
+    channels: pd.DataFrame, recording_ids: set[str], target_hz: float
+) -> dict[str, int]:
+    """Decimation factor per selected watch recording, checked before any write."""
+
+    if "sample_rate_hz" not in channels.columns:
+        raise ValueError("resampling the watch needs sample_rate_hz in channels.parquet")
+    watch = channels.loc[(channels["modality"] == "watch")
+                         & channels["recording_id"].isin(recording_ids)]
+    rates = watch.groupby("recording_id")["sample_rate_hz"].first()
+    undeclared = sorted(recording_ids - set(rates.dropna().index))
+    if undeclared:
+        raise ValueError(f"no watch sample rate declared for {undeclared}")
+    return {rid: decimation_factor(rate, target_hz) for rid, rate in rates.items()}
+
+
 def export_selected_recordings(
     root: Path | str,
     manifest: pd.DataFrame,
     selection: ExplorerSelection | Mapping[str, bool],
     destination: Path | str,
+    *,
+    watch_target_hz: float | None = None,
 ) -> Path:
-    """Create a portable folder containing only the selected recordings."""
+    """Create a portable folder containing only the selected recordings.
+
+    With `watch_target_hz`, watch tables above that rate are written
+    downsampled (see `convert.downsample`) instead of copied, and the
+    subset's manifest, channels and `selection.json` say so. Every other
+    table is a byte copy of the published file.
+    """
 
     root = Path(root)
     output = Path(destination)
@@ -328,6 +373,23 @@ def export_selected_recordings(
         & channels["modality"].isin(modalities)
     ].copy()
     subset_manifest = _subset_manifest(selected, modalities)
+    factors: dict[str, int] = {}
+    if watch_target_hz is not None and "watch" in modalities:
+        watch_ids = {Path(rel).stem for _, rel in plan if Path(rel).parts[0] == "watch"}
+        factors = {rid: f for rid, f in _watch_factors(channels, watch_ids, watch_target_hz).items()
+                   if f > 1}
+        resampled = subset_channels["recording_id"].isin(factors) & (
+            subset_channels["modality"] == "watch")
+        subset_channels.loc[resampled, "sample_rate_hz"] = float(watch_target_hz)
+        rows = subset_manifest["recording_id"].isin(factors)
+        for column in ("watch_hz_nominal", "watch_hz_measured"):
+            if column in subset_manifest:
+                subset_manifest.loc[rows, column] = float(watch_target_hz)
+        if "n_samples_watch" in subset_manifest:
+            # Every factor-th row survives decimation: ceil(n / factor).
+            n = subset_manifest.loc[rows, "n_samples_watch"]
+            divisor = subset_manifest.loc[rows, "recording_id"].map(factors)
+            subset_manifest.loc[rows, "n_samples_watch"] = -(-n // divisor)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}-", dir=output.parent))
@@ -340,11 +402,18 @@ def export_selected_recordings(
             subset_manifest,
             selection_query(selection),
             modalities=modalities,
+            watch_resampled_to_hz=float(watch_target_hz) if factors else None,
         )
         for source, relative_destination in plan:
             target = staging / relative_destination
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            recording_id = source.stem
+            if relative_destination.parts[0] == "watch" and recording_id in factors:
+                rate = watch_target_hz * factors[recording_id]
+                table = downsample(read_table(source), rate, watch_target_hz)
+                write_table(table, target, recording_id)
+            else:
+                shutil.copy2(source, target)
         try:
             output.mkdir()
         except FileExistsError as exc:

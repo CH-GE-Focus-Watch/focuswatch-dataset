@@ -4,7 +4,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from focuswatch_dataset import schema as S
-from focuswatch_dataset.convert import to_user_acceleration
+from focuswatch_dataset.convert import decimation_factor, downsample, to_user_acceleration
 
 
 def total_frame(n=300, seed=5):
@@ -42,3 +42,67 @@ def test_without_quaternion_it_refuses():
     df = df.drop(columns=list(S.COLUMNS[S.Quantity.QUAT]))
     with pytest.raises(ValueError, match="needs a quaternion"):
         to_user_acceleration(df)
+
+
+# --- downsample ---------------------------------------------------------------
+
+def _motion_table(n=1000, hz=100.0, freq=5.0):
+    t = np.arange(n) / hz
+    wave = np.sin(2 * np.pi * freq * t)
+    return pd.DataFrame({
+        "t_ns": (t * 1e9).astype(np.int64),
+        "accel_user_x": wave, "accel_user_y": wave, "accel_user_z": wave,
+        "quat_x": np.zeros(n), "quat_y": np.zeros(n),
+        "quat_z": np.sin(t), "quat_w": np.cos(t),
+        "src_sequence": np.arange(n, dtype=np.int64),
+    })
+
+
+def test_downsample_halves_rows_and_keeps_real_timestamps():
+    df = _motion_table()
+    out = downsample(df, 100.0, 50.0)
+    assert len(out) == 500
+    assert out["t_ns"].tolist() == df["t_ns"].iloc[::2].tolist()
+    assert out["src_sequence"].tolist() == list(range(0, 1000, 2))
+
+
+def test_downsample_keeps_a_slow_signal_and_removes_aliasing_content():
+    slow = downsample(_motion_table(freq=5.0), 100.0, 50.0)["accel_user_x"]
+    fast = downsample(_motion_table(freq=40.0), 100.0, 50.0)["accel_user_x"]
+    # 5 Hz is far below the 25 Hz Nyquist limit of 50 Hz; 40 Hz is above it
+    # and would alias to 10 Hz without the anti-aliasing filter.
+    assert slow.iloc[50:-50].abs().max() > 0.95
+    assert fast.iloc[50:-50].abs().max() < 0.05
+
+
+def test_downsample_picks_quaternions_instead_of_filtering_them():
+    df = _motion_table()
+    out = downsample(df, 100.0, 50.0)
+    quat = out[["quat_x", "quat_y", "quat_z", "quat_w"]].to_numpy()
+    assert np.allclose(quat, df[["quat_x", "quat_y", "quat_z", "quat_w"]].to_numpy()[::2])
+    assert np.allclose(np.linalg.norm(quat, axis=1), 1.0)
+
+
+def test_downsample_accepts_measured_rates_near_nominal():
+    assert decimation_factor(99.82, 50.0) == 2
+    assert len(downsample(_motion_table(), 99.82, 50.0)) == 500
+
+
+def test_downsample_at_target_rate_returns_an_unchanged_copy():
+    df = _motion_table(hz=50.0)
+    out = downsample(df, 50.0, 50.0)
+    pd.testing.assert_frame_equal(out, df)
+    assert out is not df
+
+
+@pytest.mark.parametrize("source, target", [(100.0, 30.0), (50.0, 100.0)])
+def test_downsample_refuses_non_integer_ratios_and_upsampling(source, target):
+    with pytest.raises(ValueError, match="cannot downsample"):
+        downsample(_motion_table(), source, target)
+
+
+def test_downsample_refuses_missing_values():
+    df = _motion_table()
+    df.loc[10, "accel_user_x"] = np.nan
+    with pytest.raises(ValueError, match=r"missing values: \['accel_user_x'\]"):
+        downsample(df, 100.0, 50.0)

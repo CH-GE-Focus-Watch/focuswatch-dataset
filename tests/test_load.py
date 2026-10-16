@@ -267,3 +267,52 @@ def test_load_recordings_same_pen_units_need_no_opt_in(tmp_path):
                                 "B": ("ncode_grid", "ncode_force")})
     out = load_recordings(tmp_path, ["A", "B"], modality="pen")
     assert "pen_xy_unit" not in out.columns
+
+
+# --- target_hz ------------------------------------------------------------------
+
+def build_long_rate_bundle(root, rates, n=200):
+    """Like build_rate_bundle, but long enough for the anti-aliasing filter."""
+    rows, channels = [], []
+    for rid, hz in rates.items():
+        t = np.arange(n) / hz
+        df = pd.DataFrame({"t_ns": (t * 1e9).astype(np.int64),
+                           "accel_user_x": np.sin(2 * np.pi * t)})
+        write_table(df, root / "watch" / f"{rid}.parquet", rid)
+        rows.append({"recording_id": rid, "has_watch": True, "accel_semantics": "user"})
+        channels.append({"recording_id": rid, "modality": "watch",
+                         "column": "accel_user_x", "sample_rate_hz": hz})
+    pd.DataFrame(rows).to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame(channels).to_parquet(root / "channels.parquet", index=False)
+    return root
+
+
+def test_target_hz_brings_mixed_rates_to_one_rate(tmp_path):
+    build_long_rate_bundle(tmp_path, {"A": 100.0, "B": 50.0})
+    out = load_recordings(tmp_path, ["A", "B"], target_hz=50.0)
+    assert out.groupby("recording_id").size().to_dict() == {"A": 100, "B": 200}
+    assert set(out["sample_rate_hz"]) == {50.0}
+
+
+def test_target_hz_does_not_change_the_published_table(tmp_path):
+    build_long_rate_bundle(tmp_path, {"A": 100.0})
+    load_recordings(tmp_path, ["A"], target_hz=50.0)
+    assert len(load_recording(tmp_path, "A")) == 200
+
+
+def test_target_hz_refuses_upsampling(tmp_path):
+    build_long_rate_bundle(tmp_path, {"A": 50.0})
+    with pytest.raises(ValueError, match="upsampling is not supported"):
+        load_recordings(tmp_path, ["A"], target_hz=100.0)
+
+
+def test_target_hz_is_only_for_motion_modalities(tmp_path):
+    build_pen_bundle(tmp_path, {"A": ("ncode_grid", "ncode_force")})
+    with pytest.raises(ValueError, match="target_hz applies to the motion modalities"):
+        load_recordings(tmp_path, ["A"], modality="pen", target_hz=50.0)
+
+
+def test_target_hz_needs_declared_rates(tmp_path):
+    build_bundle(tmp_path)  # no channels.parquet
+    with pytest.raises(ValueError, match=r"none is declared for \['A'\]"):
+        load_recordings(tmp_path, ["A"], target_hz=50.0)
