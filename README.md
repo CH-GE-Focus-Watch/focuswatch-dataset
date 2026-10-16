@@ -120,6 +120,12 @@ For interactive metadata filtering and subset export:
 uv run fw explore PATH/TO/DATASET
 ```
 
+Filters on the same manifest field are alternatives (two cohorts select
+either), filters on different fields narrow each other. "Shared clock across
+modalities" keeps only recordings whose pen and motion timestamps can be
+joined directly. Exporting pen or observer labels also exports the watch or
+head IMU they label.
+
 Press `e` to export the selected recordings, `c` to copy the equivalent pandas
 query, `p` for provenance, and `q` to quit. Use `--export NEW/DIRECTORY` to
 choose a destination; existing directories are never overwritten.

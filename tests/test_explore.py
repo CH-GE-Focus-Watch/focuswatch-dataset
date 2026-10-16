@@ -288,3 +288,88 @@ def test_cli_missing_textual_prints_exact_install_command(tmp_path, monkeypatch,
     assert capsys.readouterr().out.strip() == (
         'Explorer unavailable: install it with pip install "focuswatch-dataset[tui]"'
     )
+
+
+@pytest.fixture
+def cohort_manifest():
+    return pd.DataFrame({
+        "recording_id": ["M1", "Z1", "A1"],
+        "cohort": ["ML4SCS", "ZHAW", "AIRPODS"],
+        "time_alignment": ["estimated_delta", "shared_clock", "shared_clock"],
+        "watch_hz_nominal": [50.0, 100.0, None],
+    })
+
+
+def test_facets_on_one_column_are_alternatives(cohort_manifest):
+    selection = {"cohort_ml4scs": True, "cohort_zhaw": True}
+
+    assert filter_manifest(cohort_manifest, selection)["recording_id"].tolist() == ["M1", "Z1"]
+    assert selection_query(selection) == "cohort in ['ML4SCS', 'ZHAW']"
+    assert cohort_manifest.query(selection_query(selection))["recording_id"].tolist() == ["M1", "Z1"]
+
+
+def test_both_watch_rates_select_either_rate(cohort_manifest):
+    selection = {"watch_50_hz": True, "watch_100_hz": True}
+
+    assert filter_manifest(cohort_manifest, selection)["recording_id"].tolist() == ["M1", "Z1"]
+
+
+def test_facets_on_different_columns_still_narrow(cohort_manifest):
+    selection = {"cohort_ml4scs": True, "cohort_zhaw": True, "shared_clock": True}
+
+    assert filter_manifest(cohort_manifest, selection)["recording_id"].tolist() == ["Z1"]
+    assert selection_query(selection) == (
+        "cohort in ['ML4SCS', 'ZHAW'] and time_alignment == 'shared_clock'"
+    )
+
+
+def test_missing_column_names_every_facet_that_needs_it():
+    with pytest.raises(KeyError, match=r"'cohort'.*\['cohort_airpods', 'cohort_zhaw'\]"):
+        filter_manifest(pd.DataFrame({"recording_id": ["A"]}),
+                        {"cohort_zhaw": True, "cohort_airpods": True})
+
+
+def _write_label_bundle(root):
+    manifest = pd.DataFrame([
+        {"recording_id": "W", "has_watch": True, "has_pen": True, "has_markers": False,
+         "has_headimu": False, "has_attention": False},
+        {"recording_id": "H", "has_watch": False, "has_pen": False, "has_markers": False,
+         "has_headimu": True, "has_attention": True},
+    ])
+    root.mkdir()
+    manifest.to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame([
+        {"recording_id": "W", "modality": "watch", "column": "accel_user_x"},
+        {"recording_id": "W", "modality": "pen", "column": "x"},
+        {"recording_id": "H", "modality": "headimu", "column": "accel_user_x"},
+        {"recording_id": "H", "modality": "attention", "column": "label"},
+    ]).to_parquet(root / "channels.parquet", index=False)
+    for modality, recording_id in (("watch", "W"), ("pen", "W"), ("headimu", "H"), ("attention", "H")):
+        table = root / modality / f"{recording_id}.parquet"
+        table.parent.mkdir(exist_ok=True)
+        table.write_bytes(f"{modality}-{recording_id}".encode())
+    return manifest
+
+
+def test_exporting_pen_labels_includes_the_watch_they_label(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_label_bundle(root)
+
+    out = export_selected_recordings(root, manifest, {"digital_pen": True}, tmp_path / "pen-only")
+
+    assert (out / "watch" / "W.parquet").is_file()
+    assert (out / "pen" / "W.parquet").is_file()
+    assert bool(pd.read_parquet(out / "sessions.parquet")["has_watch"].iloc[0])
+
+
+def test_exporting_observer_labels_includes_the_head_imu_they_label(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_label_bundle(root)
+
+    out = export_selected_recordings(
+        root, manifest, {"observer_annotation": True}, tmp_path / "attention-only"
+    )
+
+    assert (out / "headimu" / "H.parquet").is_file()
+    assert (out / "attention" / "H.parquet").is_file()
+    assert json.loads((out / "selection.json").read_text())["modalities"] == ["headimu", "attention"]

@@ -23,6 +23,8 @@ class Facet:
 
 
 # Registry order is the canonical order for both the UI and generated queries.
+# Facets on the same manifest column are alternatives (OR), facets on different
+# columns narrow each other (AND): "ML4SCS" plus "ZHAW" means either cohort.
 FACETS: dict[str, Facet] = {
     "smartwatch": Facet("Smartwatch", "Modalities", ("has_watch", True)),
     "head_imu": Facet("Head IMU", "Modalities", ("has_headimu", True)),
@@ -57,6 +59,15 @@ FACETS: dict[str, Facet] = {
     "acceleration_total": Facet(
         "Acceleration including gravity", "Acquisition", ("accel_semantics", "total")
     ),
+    "cohort_ml4scs": Facet("ML4SCS", "Cohort", ("cohort", "ML4SCS")),
+    "cohort_zhaw": Facet("ZHAW", "Cohort", ("cohort", "ZHAW")),
+    "cohort_airpods": Facet("AirPods", "Cohort", ("cohort", "AIRPODS")),
+    "cohort_moleskine": Facet("Moleskine", "Cohort", ("cohort", "MOLESKINE")),
+    # Why: only a shared clock lets pen events label motion samples by timestamp
+    # alone; estimated_delta and overlap_only recordings need an offset first.
+    "shared_clock": Facet(
+        "Shared clock across modalities", "Timing", ("time_alignment", "shared_clock")
+    ),
 }
 
 
@@ -69,21 +80,33 @@ def _active_ids(selection: ExplorerSelection | Mapping[str, bool]) -> frozenset[
     return frozenset(facet_id for facet_id, active in selection.items() if active)
 
 
+def _active_conditions(
+    selection: ExplorerSelection | Mapping[str, bool],
+) -> dict[str, tuple[object, ...]]:
+    """Active facet values grouped by manifest column, in registry order."""
+
+    active = _active_ids(selection)
+    grouped: dict[str, list[object]] = {}
+    for facet_id, facet in FACETS.items():
+        if facet_id in active:
+            column, value = facet.condition
+            grouped.setdefault(column, []).append(value)
+    return {column: tuple(values) for column, values in grouped.items()}
+
+
 def selection_query(selection: ExplorerSelection | Mapping[str, bool]) -> str:
     """Return a stable pandas-compatible expression for active facets."""
 
-    active = _active_ids(selection)
     expressions: list[str] = []
-    for facet_id, facet in FACETS.items():
-        if facet_id not in active:
-            continue
-        column, value = facet.condition
-        if value is True:
+    for column, values in _active_conditions(selection).items():
+        if len(values) > 1:
+            expressions.append(f"{column} in {list(values)!r}")
+        elif values[0] is True:
             expressions.append(column)
-        elif value is False:
+        elif values[0] is False:
             expressions.append(f"not {column}")
         else:
-            expressions.append(f"{column} == {value!r}")
+            expressions.append(f"{column} == {values[0]!r}")
     # A scalar ``True`` is not a valid DataFrame.query row mask.
     return " and ".join(expressions) or "index == index"
 
@@ -94,15 +117,15 @@ def filter_manifest(
 ) -> pd.DataFrame:
     """Intersect active facets using manifest columns only."""
 
-    active = _active_ids(selection)
     selected = manifest
-    for facet_id, facet in FACETS.items():
-        if facet_id not in active:
-            continue
-        column, value = facet.condition
+    for column, values in _active_conditions(selection).items():
         if column not in manifest.columns:
-            raise KeyError(f"manifest has no column {column!r} required by facet {facet_id!r}")
-        selected = selected.loc[selected[column].eq(value)]
+            facet_ids = [facet_id for facet_id in sorted(_active_ids(selection))
+                         if FACETS[facet_id].condition[0] == column]
+            raise KeyError(
+                f"manifest has no column {column!r} required by facet(s) {facet_ids}"
+            )
+        selected = selected.loc[selected[column].isin(values)]
     return selected.copy().reset_index(drop=True)
 
 
@@ -157,6 +180,10 @@ def export_selection(
     raise ValueError("selection export destination must end in .csv or .json")
 
 
+# Why: a label stream is exported with the motion stream it labels. Pen
+# contact is the writing ground truth for the watch, observer intervals the
+# attention ground truth for the head IMU; either alone holds labels without
+# the sensor data they describe.
 _FACET_MODALITIES: dict[str, tuple[str, ...]] = {
     "smartwatch": ("watch",),
     "watch_gravity": ("watch",),
@@ -171,8 +198,8 @@ _FACET_MODALITIES: dict[str, tuple[str, ...]] = {
     "head_gravity": ("headimu",),
     "head_quaternion": ("headimu",),
     "head_gyro": ("headimu",),
-    "digital_pen": ("pen", "markers"),
-    "observer_annotation": ("attention",),
+    "digital_pen": ("pen", "markers", "watch"),
+    "observer_annotation": ("attention", "headimu"),
 }
 
 _WINDOWS_RESERVED_NAMES = frozenset(

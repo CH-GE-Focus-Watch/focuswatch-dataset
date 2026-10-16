@@ -74,6 +74,17 @@ def test_manifest_covers_every_cohort(tmp_path):
     assert set(load_manifest(out)["cohort"]) == {"ML4SCS", "ZHAW", "AIRPODS", "MOLESKINE"}
 
 
+def test_explorer_offers_a_facet_for_every_built_cohort(tmp_path):
+    # A cohort the adapters emit but the explorer cannot select would be
+    # reachable only by a hand-written query.
+    from focuswatch_dataset.explore import FACETS
+
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    facet_cohorts = {f.condition[1] for f in FACETS.values() if f.condition[0] == "cohort"}
+    assert facet_cohorts == set(load_manifest(out)["cohort"])
+
+
 def test_build_is_deterministic(tmp_path):
     src = sources(tmp_path)
     a, b = tmp_path / "a", tmp_path / "b"
