@@ -11,7 +11,7 @@ from typing import Mapping
 import pandas as pd
 
 from . import schema as S
-from .convert import decimation_factor, downsample
+from .convert import DECIMATION_RATIO_TOLERANCE, decimation_factor, downsample
 from .write import read_table, write_table
 
 
@@ -71,6 +71,43 @@ FACETS: dict[str, Facet] = {
         "Shared clock across modalities", "Timing", ("time_alignment", "shared_clock")
     ),
 }
+
+
+@dataclass(frozen=True)
+class Preset:
+    """A research goal that selects the facets its ground truth needs."""
+
+    label: str
+    description: str
+    facets: frozenset[str]
+
+
+# Ground truth decides the pairing: pen contact labels the watch, observer
+# intervals label the head IMU (see _FACET_MODALITIES below).
+PRESETS: dict[str, Preset] = {
+    "writing_detection": Preset(
+        "Writing detection", "Smartwatch motion labelled by pen contact",
+        frozenset({"smartwatch", "digital_pen"}),
+    ),
+    "attention": Preset(
+        "Attention", "Head IMU motion labelled by observer annotation",
+        frozenset({"head_imu", "observer_annotation"}),
+    ),
+    "everything": Preset("Everything", "All recordings, no filter", frozenset()),
+}
+
+
+def watch_rate_summary(selected: pd.DataFrame, target_hz: float) -> tuple[dict[int, int], int]:
+    """Recordings per rounded measured watch rate, and how many exceed `target_hz`."""
+
+    if "watch_hz_measured" not in selected:
+        return {}, 0
+    rates = selected["watch_hz_measured"].dropna()
+    counts = {int(rate): int(n) for rate, n in rates.round().value_counts().sort_index().items()}
+    # Why: the export's tolerance, not exact equality, decides whether a
+    # 99.8 Hz watch counts as above a 50 Hz target.
+    above = int((rates > target_hz * (1 + DECIMATION_RATIO_TOLERANCE)).sum())
+    return counts, above
 
 
 def _active_ids(selection: ExplorerSelection | Mapping[str, bool]) -> frozenset[str]:

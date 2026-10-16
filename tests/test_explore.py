@@ -450,3 +450,23 @@ def test_export_preview_counts_files_and_bytes_per_modality(tmp_path):
         "watch": (1, len(b"watch-W")),
         "pen": (1, len(b"pen-W")),
     }
+
+
+def test_presets_name_only_registered_facets():
+    from focuswatch_dataset.explore import PRESETS
+
+    for preset in PRESETS.values():
+        assert preset.facets <= set(FACETS)
+    assert PRESETS["writing_detection"].facets == {"smartwatch", "digital_pen"}
+    assert PRESETS["attention"].facets == {"head_imu", "observer_annotation"}
+    assert selection_query({f: True for f in PRESETS["everything"].facets}) == "index == index"
+
+
+def test_watch_rate_summary_counts_rates_and_what_a_target_would_downsample():
+    from focuswatch_dataset.explore import watch_rate_summary
+
+    selected = pd.DataFrame({"watch_hz_measured": [50.0, 99.82, 100.0, None]})
+
+    assert watch_rate_summary(selected, 50.0) == ({50: 1, 100: 2}, 2)
+    assert watch_rate_summary(selected.iloc[[0]], 50.0) == ({50: 1}, 0)
+    assert watch_rate_summary(pd.DataFrame({"recording_id": ["A"]}), 50.0) == ({}, 0)

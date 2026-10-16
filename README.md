@@ -132,12 +132,15 @@ For interactive metadata filtering and subset export:
 uv run fw explore PATH/TO/DATASET
 ```
 
-The explorer is a three-step assistant: choose cohorts and devices, narrow by
-signals, rates and timing, then export. Each filter shows how many recordings
-it would leave, and the recording preview stays visible in every step. The
-export step lists the files and their size, and can bring the watch to 50 Hz
-(see `target_hz` above) instead of copying it at its native rate. Press `1`,
-`2`, `3` to switch steps.
+The explorer is a three-step assistant: pick a goal ("Writing detection" for
+watch plus pen, "Attention" for head IMU plus observer annotation, or
+"Everything") and refine devices and cohorts, narrow by signals, rates and
+timing, then export. Each filter shows how many recordings it would leave, and
+the recording preview stays visible in every step. The export step lists the
+files, their size and the watch rates in the selection, and can bring the
+watch to 50 Hz (see `target_hz` above) in the same export instead of copying it
+at its native rate. Press `1`, `2`, `3` to switch steps and the arrow keys and
+space to move between and toggle filters.
 
 Filters on the same manifest field are alternatives (two cohorts select
 either), filters on different fields narrow each other. "Shared clock across
