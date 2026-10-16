@@ -48,3 +48,14 @@ def test_example_selects_only_recordings_with_the_requested_modality(synthetic_b
     assert result.returncode == 0, result.stderr
     assert "AIRPODS-P1" in result.stdout
     assert "loaded 3 attention sample row(s)" in result.stdout
+
+
+def test_example_selects_one_watch_rate_before_loading(synthetic_bundle):
+    """The loader refuses mixed rates, so the example narrows to one nominal rate."""
+    result = run_example(
+        synthetic_bundle, "--require-pen", "--accel-semantics", "total", "--watch-hz", "50"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "MOLESKINE-20240822T121207869Z" in result.stdout
+    assert "ZHAW-EGE-T6" not in result.stdout

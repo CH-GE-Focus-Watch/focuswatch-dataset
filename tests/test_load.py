@@ -193,3 +193,77 @@ def test_load_recordings_semantics_guard_is_scoped_to_watch(tmp_path):
         write_table(pen, root / "pen" / f"{rid}.parquet", rid)
     out = load_recordings(root, ["A", "C"], modality="pen")
     assert set(out["recording_id"]) == {"A", "C"}
+
+
+# --- sample-rate and pen-unit guards ------------------------------------------
+
+def build_rate_bundle(root, rates):
+    """Watch tables of equal semantics whose channels declare `rates`."""
+    rows, channels = [], []
+    for rid, hz in rates.items():
+        df = pd.DataFrame({"t_ns": np.arange(10, dtype=np.int64), "accel_user_x": np.zeros(10)})
+        write_table(df, root / "watch" / f"{rid}.parquet", rid)
+        rows.append({"recording_id": rid, "has_watch": True, "accel_semantics": "user"})
+        channels.append({"recording_id": rid, "modality": "watch",
+                         "column": "accel_user_x", "sample_rate_hz": hz})
+    pd.DataFrame(rows).to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame(channels).to_parquet(root / "channels.parquet", index=False)
+    return root
+
+
+def test_load_recordings_refuses_mixed_sample_rates(tmp_path):
+    build_rate_bundle(tmp_path, {"A": 100.0, "B": 50.0})
+    with pytest.raises(ValueError, match=r"mixed watch sample rates \{50.0: \['B'\], 100.0: \['A'\]\}"):
+        load_recordings(tmp_path, ["A", "B"])
+
+
+def test_load_recordings_tolerates_measured_rate_jitter(tmp_path):
+    # The AirPods head IMU spans 27.0-28.6 Hz for one nominal stream.
+    build_rate_bundle(tmp_path, {"A": 27.03, "B": 28.57})
+    assert len(load_recordings(tmp_path, ["A", "B"])) == 20
+
+
+def test_load_recordings_mixed_rates_opt_in_tags_rows(tmp_path):
+    build_rate_bundle(tmp_path, {"A": 100.0, "B": 50.0})
+    out = load_recordings(tmp_path, ["A", "B"], allow_mixed_rates=True)
+    assert out.groupby("recording_id")["sample_rate_hz"].first().to_dict() == {"A": 100.0, "B": 50.0}
+
+
+def test_load_recordings_lists_a_recording_twice_without_breaking_the_guards(tmp_path):
+    build_rate_bundle(tmp_path, {"A": 100.0})
+    out = load_recordings(tmp_path, ["A", "A"], allow_mixed_rates=True)
+    assert len(out) == 20
+    assert set(out["sample_rate_hz"]) == {100.0}
+
+
+def build_pen_bundle(root, units):
+    rows = []
+    for rid, (xy, pressure) in units.items():
+        pen = pd.DataFrame({"t_ns": np.arange(5, dtype=np.int64), "x": np.zeros(5)})
+        write_table(pen, root / "pen" / f"{rid}.parquet", rid)
+        rows.append({"recording_id": rid, "has_pen": True,
+                     "pen_xy_unit": xy, "pen_pressure_scale": pressure})
+    pd.DataFrame(rows).to_parquet(root / "sessions.parquet", index=False)
+    return root
+
+
+def test_load_recordings_refuses_mixed_pen_units(tmp_path):
+    build_pen_bundle(tmp_path, {"A": ("ncode_grid", "ncode_force"),
+                                "B": ("webapp_raw", "webapp_force")})
+    with pytest.raises(ValueError, match=r"mixed pen_xy_unit \{'ncode_grid': \['A'\], 'webapp_raw': \['B'\]\}"):
+        load_recordings(tmp_path, ["A", "B"], modality="pen")
+
+
+def test_load_recordings_mixed_pen_units_opt_in_tags_rows(tmp_path):
+    build_pen_bundle(tmp_path, {"A": ("ncode_grid", "ncode_force"),
+                                "B": ("webapp_raw", "webapp_force")})
+    out = load_recordings(tmp_path, ["A", "B"], modality="pen", allow_mixed_pen_units=True)
+    units = out.groupby("recording_id")[["pen_xy_unit", "pen_pressure_scale"]].first()
+    assert units.loc["B"].tolist() == ["webapp_raw", "webapp_force"]
+
+
+def test_load_recordings_same_pen_units_need_no_opt_in(tmp_path):
+    build_pen_bundle(tmp_path, {"A": ("ncode_grid", "ncode_force"),
+                                "B": ("ncode_grid", "ncode_force")})
+    out = load_recordings(tmp_path, ["A", "B"], modality="pen")
+    assert "pen_xy_unit" not in out.columns

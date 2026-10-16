@@ -47,6 +47,20 @@ def parse_args() -> argparse.Namespace:
         help="watch acceleration semantics to select (default: user)",
     )
     parser.add_argument(
+        "--watch-hz",
+        type=float,
+        choices=(50.0, 100.0),
+        default=100.0,
+        help="watch nominal sample rate to select (default: 100); the loader "
+        "refuses to mix rates",
+    )
+    parser.add_argument(
+        "--allow-mixed-rates",
+        action="store_true",
+        help="load recordings with different sample rates and keep a per-row "
+        "sample_rate_hz column",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         metavar="N",
@@ -70,6 +84,8 @@ def main() -> int:
     flags[f"has_{args.modality}"] = True
     if args.modality == "watch":
         flags["accel_semantics"] = args.accel_semantics
+        if not args.allow_mixed_rates:
+            flags["watch_hz_nominal"] = args.watch_hz
     selected = by_flags(manifest, **flags)
     recording_ids = selected["recording_id"].tolist()
     if args.limit is not None:
@@ -80,7 +96,10 @@ def main() -> int:
     print(f"selected {len(recording_ids)} recording(s): {recording_ids}")
 
     # Loading is explicit and happens only after the manifest selection.
-    samples = load_recordings(args.root, recording_ids, modality=args.modality)
+    samples = load_recordings(
+        args.root, recording_ids, modality=args.modality,
+        allow_mixed_rates=args.allow_mixed_rates,
+    )
     print(f"loaded {len(samples)} {args.modality} sample row(s)")
     print(samples.head())
     return 0
