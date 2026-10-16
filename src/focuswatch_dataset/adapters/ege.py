@@ -15,9 +15,9 @@ from .. import schema as S
 from ..physics import norm_stats, still_mask
 from ..time_axis import median_rate_hz, sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
-from .eth_web import handedness_from_payload, redact_payload_json
+from .zhaw_web import handedness_from_payload, redact_payload_json
 
-COHORT = "ETH-EGE"
+COHORT = "ZHAW-EGE"
 
 
 def _assert_gyroscope_like(values: np.ndarray) -> None:
@@ -36,7 +36,7 @@ class EgeAdapter:
     def discover(self, root: Path) -> list[RecordingRef]:
         refs = []
         for d in sorted(p for p in root.iterdir() if (p / "imu_samples_rows.csv").exists()):
-            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ETH-{d.name}", "ETH", self.name, d))
+            refs.append(RecordingRef(f"{COHORT}-{d.name}", f"ZHAW-{d.name}", "ZHAW", self.name, d))
         return refs
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
@@ -73,7 +73,7 @@ class EgeAdapter:
             # validator falls back to the measured rate.
             "watch_hz_nominal": None,
             "accel_semantics": "total",
-            # Shared session_start payload keeps the ETH covariate consistent.
+            # Shared session_start payload keeps the ZHAW covariate consistent.
             "handedness": handedness,
             "src_payload_dropped_key_count": dropped_keys,
             # Established by a still-window test on the real corpus: the norm sits at
@@ -109,7 +109,7 @@ class EgeAdapter:
                 ("markers", "src_t_session_ms"): S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS,
             },
             "time_alignment": "shared_clock",
-            "protocol_id": "eth_web",
+            "protocol_id": "zhaw_web",
             "study_mode": "study",
             # Ege is generation A (see schema.py's PEN_EVENTS_GEN_A);
             # the label follows the export generation, not this pipeline
@@ -191,7 +191,7 @@ class EgeAdapter:
                 "t_ns": to_unix_ns(non_stroke["t_ms"].to_numpy(), "ms"),
                 "event": non_stroke["type"].astype(str),
                 "task_id": "", "task_name": "", "task_index": np.nan,
-                "task_category": "", "protocol_id": "eth_web",
+                "task_category": "", "protocol_id": "zhaw_web",
                 # These rows come from pen_events.csv, which has no
                 # payload column - but one modality must carry one column set,
                 # so the column exists here and is empty rather than absent.
@@ -220,7 +220,7 @@ class EgeAdapter:
             # cohorts. -1 looks like a valid index to a reuser filtering
             # `task_index >= 0`; NaN cannot be mistaken for one.
             "task_id": "", "task_name": "", "task_index": np.nan,
-            "task_category": "", "protocol_id": "eth_web",
+            "task_category": "", "protocol_id": "zhaw_web",
             "src_payload": [p for p, _ in redacted],
             # Why: t_session_ms is a fixed column of events.csv in the documented
             # source schema; its absence means the format changed and that must

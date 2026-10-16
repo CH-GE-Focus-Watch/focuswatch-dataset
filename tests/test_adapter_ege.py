@@ -209,7 +209,7 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     write_fixture(tmp_path)
     a = EgeAdapter()
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
-    assert [f for f in validate_motion_table(watch, "ETH-EGE-T6", "watch", 100.0)
+    assert [f for f in validate_motion_table(watch, "ZHAW-EGE-T6", "watch", 100.0)
             if not f.passed] == []
 
 
@@ -272,7 +272,7 @@ def test_importing_the_adapters_package_registers_ege():
 def test_marker_payloads_are_allow_listed_here_too(tmp_path):
     """C5 was applied to the SensorLogger adapter alone, and this export carries
     the same session_start payload - so `user_agent` and `screen` stayed in the
-    published Ege markers. Both ETH pipelines now share one allow-list.
+    published Ege markers. Both ZHAW pipelines now share one allow-list.
     """
     write_fixture(tmp_path)
     a = EgeAdapter()

@@ -304,8 +304,8 @@ CHANNEL_COLUMNS = (
 )
 
 # Non-physical signal columns whose actual scale is a genuinely different unit
-# per recording (Moleskine's ncode grid vs. the ETH web app's own pixel/force
-# scale, and within ETH a further split by export generation - see
+# per recording (Moleskine's ncode grid vs. the ZHAW web app's own pixel/force
+# scale, and within ZHAW a further split by export generation - see
 # schema.PEN_XY_UNIT_GEN_A/B). channels.parquet's
 # `unit` cell for these stays the closed-vocabulary "device_native" - the
 # per-recording scale label lives ONLY in the manifest

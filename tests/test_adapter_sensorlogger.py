@@ -280,8 +280,8 @@ def test_participant_id_comes_from_session_start_payload_not_directory_name(tmp_
     not a directory-name parse."""
     write_fixture(tmp_path, sid="E1_session3_d7498f51", participant_id="E1")
     ref = SensorLoggerAdapter().discover(tmp_path)[0]
-    assert ref.participant_id == "ETH-E1"
-    assert ref.recording_id == "ETH-SL-E1_session3_d7498f51"   # recording_id is unaffected
+    assert ref.participant_id == "ZHAW-E1"
+    assert ref.recording_id == "ZHAW-SL-E1_session3_d7498f51"   # recording_id is unaffected
 
 
 def test_discover_fails_loudly_without_a_participant_id(tmp_path):
@@ -460,7 +460,7 @@ def test_pen_comes_from_the_session_json(tmp_path):
 def test_pen_provenance_columns_declare_their_own_clock_not_backend_wall_clock(tmp_path):
     """Item 1 (fix round C): pen.src_timestamp is the pen hardware's own
     free-running clock (~749 days off backend_wall_clock, measured on
-    ETH-SL-E2 - whole-branch-review-2.md finding 1), and src_t_session_ms is
+    ZHAW-SL-E2 - whole-branch-review-2.md finding 1), and src_t_session_ms is
     a session-relative offset, not a wall-clock reading. The modality
     default must still apply to every other column, including pen/'s own
     t_ns axis.
@@ -499,7 +499,7 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     write_fixture(tmp_path)
     a = SensorLoggerAdapter()
     watch = a.load(a.discover(tmp_path)[0]).tables["watch"]
-    assert [f for f in validate_motion_table(watch, "ETH-SL-E2", "watch", 100.0)
+    assert [f for f in validate_motion_table(watch, "ZHAW-SL-E2", "watch", 100.0)
             if not f.passed] == []
 
 
@@ -511,7 +511,7 @@ def test_loaded_headimu_gravity_passes_the_validator(tmp_path):
     write_fixture(tmp_path)
     a = SensorLoggerAdapter()
     head = a.load(a.discover(tmp_path)[0]).tables["headimu"]
-    findings = validate_motion_table(head, "ETH-SL-E2", "headimu", 100.0)
+    findings = validate_motion_table(head, "ZHAW-SL-E2", "headimu", 100.0)
     gravity_finding = next(f for f in findings if f.check == "gravity_norm")
     assert gravity_finding.passed
     assert S.GRAVITY_NORM_BAND[0] <= gravity_finding.observed <= S.GRAVITY_NORM_BAND[1]
@@ -565,7 +565,7 @@ def test_watch_hz_nominal_falls_back_to_measured_when_sample_rate_is_absent(tmp_
     bundle = a.load(a.discover(tmp_path)[0])
     assert bundle.meta["watch_hz_nominal"] is None
     # The measured rate is still recorded - just downstream, by the validator.
-    findings = validate_motion_table(bundle.tables["watch"], "ETH-SL-E2", "watch", None)
+    findings = validate_motion_table(bundle.tables["watch"], "ZHAW-SL-E2", "watch", None)
     rate_finding = next(f for f in findings if f.check == "sample_rate")
     assert rate_finding.passed
     assert rate_finding.observed == pytest.approx(100.0, rel=0.05)
@@ -621,7 +621,7 @@ def test_coverage_matrix_agrees_with_the_real_bundle(tmp_path):
     assert check_coverage(manifest, findings) == []
 
 
-# --- C4: a dropped-out modality (ETH-SL-E3_session1's headimu) -------------
+# --- C4: a dropped-out modality (ZHAW-SL-E3_session1's headimu) -------------
 #
 # Real measured case: Headphone.csv holds 58 rows spanning 2.1 s inside an
 # 8713.6 s recording (coverage ratio ~0.00024) - the head unit disconnected

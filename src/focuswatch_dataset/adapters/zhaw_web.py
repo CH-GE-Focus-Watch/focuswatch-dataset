@@ -1,6 +1,6 @@
-"""Shared handling of the ETH web app's event payloads.
+"""Shared handling of the ZHAW web app's event payloads.
 
-Both ETH pipelines export the same `session_start` payload — the Ege export
+Both ZHAW pipelines export the same `session_start` payload — the Ege export
 carries it as a JSON string in `events.csv`, SensorLogger as a nested object in
 the session JSON — so the redaction rule and the handedness lookup live here
 once. Applying them in only one adapter is what let `user_agent` and `screen`
