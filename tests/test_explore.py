@@ -438,3 +438,15 @@ def test_export_refuses_an_impossible_target_rate_before_writing(tmp_path):
         export_selected_recordings(root, manifest, {"smartwatch": True}, destination,
                                    watch_target_hz=100.0)
     assert not destination.exists()
+
+
+def test_export_preview_counts_files_and_bytes_per_modality(tmp_path):
+    root = tmp_path / "bundle"
+    manifest = _write_label_bundle(root)
+
+    preview = fw.explore.export_preview(root, manifest, {"digital_pen": True})
+
+    assert preview == {
+        "watch": (1, len(b"watch-W")),
+        "pen": (1, len(b"pen-W")),
+    }

@@ -303,6 +303,22 @@ def _subset_manifest(
     return subset
 
 
+def export_preview(
+    root: Path | str,
+    manifest: pd.DataFrame,
+    selection: ExplorerSelection | Mapping[str, bool],
+) -> dict[str, tuple[int, int]]:
+    """Files and bytes per modality that `export_selected_recordings` would copy."""
+
+    selected = filter_manifest(manifest, selection)
+    preview: dict[str, tuple[int, int]] = {}
+    for source, relative in _copy_plan(Path(root), selected, _selected_modalities(selected, selection)):
+        modality = relative.parts[0]
+        files, size = preview.get(modality, (0, 0))
+        preview[modality] = (files + 1, size + source.stat().st_size)
+    return preview
+
+
 def _watch_factors(
     channels: pd.DataFrame, recording_ids: set[str], target_hz: float
 ) -> dict[str, int]:

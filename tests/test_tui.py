@@ -1,12 +1,13 @@
 import asyncio
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
 pytest.importorskip("textual")
 
-from textual.widgets import Checkbox, Static
+from textual.widgets import Checkbox, Static, TabbedContent
 
 from focuswatch_dataset.tui import (
     DatasetExplorerApp,
@@ -85,6 +86,8 @@ def test_toggling_smartwatch_and_gravity_updates_visible_count(tmp_path):
             await pilot.pause()
             assert "2 of 3 recordings" in count_text(app)
 
+            # Signal facets live in step 2 of the assistant.
+            await pilot.press("2")
             await pilot.click("#facet-watch_gravity")
             await pilot.pause()
             assert "1 of 3 recording " in count_text(app)
@@ -108,6 +111,7 @@ def test_export_writes_selected_sensor_files_to_the_requested_directory(tmp_path
         app = DatasetExplorerApp(root, export_path=destination)
         async with app.run_test() as pilot:
             await pilot.click("#facet-smartwatch")
+            await pilot.press("2")
             await pilot.click("#facet-watch_gravity")
             await pilot.press("e")
             await pilot.pause()
@@ -186,3 +190,90 @@ def test_default_export_directory_uses_downloads_or_current_directory(tmp_path):
 
     assert _default_export_directory(home=home, cwd=tmp_path).parent == downloads
     assert _default_export_directory(home=tmp_path / "no-downloads", cwd=tmp_path).parent == tmp_path
+
+
+def facet_count(app, facet_id):
+    return str(app.query_one(f"#count-{facet_id}", Static).render())
+
+
+def test_facets_show_how_many_recordings_each_would_leave(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test() as pilot:
+            assert facet_count(app, "smartwatch") == "2"
+            assert facet_count(app, "digital_pen") == "2"
+            await pilot.click("#facet-smartwatch")
+            await pilot.pause()
+            assert facet_count(app, "digital_pen") == "1"
+
+    asyncio.run(scenario())
+
+
+def test_facets_whose_column_is_missing_are_disabled_not_fatal(tmp_path):
+    # build_manifest has no has_watch_gyro column, like a bundle built before it existed.
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test():
+            assert app.query_one("#facet-watch_gyro", Checkbox).disabled
+            assert facet_count(app, "watch_gyro") == "–"
+            assert not app.query_one("#facet-smartwatch", Checkbox).disabled
+
+    asyncio.run(scenario())
+
+
+def test_next_and_back_buttons_walk_the_three_steps(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test() as pilot:
+            steps = app.query_one("#steps", TabbedContent)
+            assert steps.active == "data"
+            # Each pause lets the newly shown pane lay out before the next click.
+            await pilot.click("#next-data")
+            await pilot.pause()
+            assert steps.active == "signals"
+            await pilot.click("#next-signals")
+            await pilot.pause()
+            assert steps.active == "export"
+            await pilot.click("#back-export")
+            await pilot.pause()
+            assert steps.active == "signals"
+
+    asyncio.run(scenario())
+
+
+def test_export_step_can_bring_the_watch_to_50_hz(tmp_path):
+    from focuswatch_dataset.write import write_table
+
+    root = build_manifest(tmp_path)
+    t = np.arange(200) / 100.0
+    write_table(pd.DataFrame({"t_ns": (t * 1e9).astype(np.int64),
+                              "accel_user_x": np.sin(2 * np.pi * t)}),
+                root / "watch" / "A.parquet", "A")
+    pd.DataFrame([
+        {"recording_id": "A", "modality": "watch", "column": "accel_user_x", "sample_rate_hz": 100.0},
+    ]).to_parquet(root / "channels.parquet", index=False)
+    destination = tmp_path / "at-50"
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=destination)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.click("#facet-smartwatch")
+            await pilot.press("2")
+            await pilot.click("#facet-watch_gravity")
+            await pilot.press("3")
+            await pilot.pause()
+            assert "watch" in str(app.query_one("#export-files", Static).render())
+            await pilot.click("#rate-target")
+            await pilot.click("#export-button")
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    payload = json.loads((destination / "selection.json").read_text(encoding="utf-8"))
+    assert payload["watch_resampled_to_hz"] == 50.0
+    assert len(pd.read_parquet(destination / "watch" / "A.parquet")) == 100
