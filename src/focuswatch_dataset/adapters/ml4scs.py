@@ -64,6 +64,7 @@ class Ml4scsAdapter:
 
         meta = {
             "watch_model": S.WATCH_MODEL_SERIES_6,
+            "pen_model": S.PEN_MODEL_NWP_F130 if "pen" in tables else "",
             "watch_hz_nominal": 50.0 if str(row.get("watch_profile")) == "50hz" else 100.0,
             "accel_semantics": "user",
             "accel_calibration": "fused",

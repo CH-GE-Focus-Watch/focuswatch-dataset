@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 from focuswatch_dataset.manifest import build_manifest
 from focuswatch_dataset.redact import RedactionPolicy, apply_redaction, redact_bundle
@@ -79,7 +80,7 @@ def _bundle(**meta):
     return RecordingBundle(
         RecordingRef("COHORT-R1", "COHORT-P1", "COHORT", "pipeline", Path(".")),
         {"pen": pen(), "markers": markers()},
-        meta,
+        {"pen_model": S.PEN_MODEL_NWP_F130, **meta},
     )
 
 

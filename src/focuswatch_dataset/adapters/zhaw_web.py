@@ -59,3 +59,20 @@ def handedness_from_payload(payload: dict) -> str:
             f"unrecognised handedness value {value!r}; expected one of {S.HANDEDNESS_VALUES}"
         )
     return value
+
+
+def pen_model_from_payload(payload: dict) -> str:
+    """Map `pen_name`, the pen's Bluetooth name, to the pen model it stands for.
+
+    A null or empty name (logged when no pen was connected at session start)
+    is "unknown"; a name not seen before fails rather than being published.
+    """
+    value = payload.get("pen_name")
+    if value is None or not str(value).strip():
+        return S.DEVICE_MODEL_UNKNOWN
+    value = str(value).strip()
+    if value not in S.ZHAW_PEN_MODEL_BY_NAME:
+        raise ValueError(
+            f"unrecognised pen_name {value!r}; expected one of {tuple(S.ZHAW_PEN_MODEL_BY_NAME)}"
+        )
+    return S.ZHAW_PEN_MODEL_BY_NAME[value]

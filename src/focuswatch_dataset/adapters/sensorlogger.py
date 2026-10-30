@@ -20,7 +20,7 @@ import pandas as pd
 from .. import schema as S
 from ..time_axis import sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
-from .zhaw_web import handedness_from_payload, redact_payload
+from .zhaw_web import handedness_from_payload, pen_model_from_payload, redact_payload
 
 COHORT = "ZHAW-SL"
 
@@ -136,7 +136,7 @@ class SensorLoggerAdapter:
             tables["watch_rawaccel"] = rawaccel_df
             column_factors.update({("watch_rawaccel", c): f for c, f in rawaccel_factors.items()})
 
-        pen, markers, generation, handedness, dropped_keys = self._from_session_json(d)
+        pen, markers, generation, handedness, pen_model, dropped_keys = self._from_session_json(d)
         if pen is not None:
             tables["pen"] = pen
         if markers is not None:
@@ -144,6 +144,8 @@ class SensorLoggerAdapter:
 
         meta = {
             "watch_model": S.WATCH_MODEL_SE_2,
+            "pen_model": pen_model if "pen" in tables else "",
+            "head_model": S.HEAD_MODEL_AIRPODS_PRO_3 if "headimu" in tables else "",
             "watch_hz_nominal": _watch_hz_nominal(metadata),
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",
@@ -230,7 +232,7 @@ class SensorLoggerAdapter:
             raise ValueError(f"expected exactly one session JSON in {d}, found {candidates}")
         return json.loads(candidates[0].read_text())
 
-    # Both ZHAW pipelines share payload redaction and handedness extraction.
+    # Both ZHAW pipelines share payload redaction and session_start lookups.
     _redact_payload = staticmethod(redact_payload)
 
     @staticmethod
@@ -238,12 +240,18 @@ class SensorLoggerAdapter:
         start = SensorLoggerAdapter._find_event(events, "session_start")
         return handedness_from_payload((start or {}).get("payload", {}))
 
+    @staticmethod
+    def _pen_model(events: list[dict]) -> str:
+        start = SensorLoggerAdapter._find_event(events, "session_start")
+        return pen_model_from_payload((start or {}).get("payload", {}))
+
     def _from_session_json(
         self, d: Path
-    ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str, str, int]:
+    ) -> tuple[pd.DataFrame | None, pd.DataFrame | None, str, str, str, int]:
         payload = self._read_session_json(d)
         events = payload["events"]
         handedness = self._handedness(events)
+        pen_model = self._pen_model(events)
 
         # Generation A stores strokes under a
         # separate, flat `pen_events` key (type/x/y/force, no payload
@@ -331,7 +339,7 @@ class SensorLoggerAdapter:
                 "src_payload": [json.dumps(p) for p, _ in redacted],
                 "src_t_session_ms": [e.get("t_session_ms", np.nan) for e in others],
             }))
-        return pen, markers, generation, handedness, dropped_keys
+        return pen, markers, generation, handedness, pen_model, dropped_keys
 
 
 register(SensorLoggerAdapter())

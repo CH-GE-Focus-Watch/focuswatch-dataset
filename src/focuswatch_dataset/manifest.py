@@ -23,11 +23,12 @@ MANIFEST_COLUMNS = (
     "watch_model",
     "watch_hz_nominal", "watch_hz_measured", "has_gravity", "has_quaternion", "has_watch_gyro",
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
+    "head_model",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
     "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
     "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
     "watch_wrist_side", "handedness",
-    "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
+    "pen_model", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
     "delta_applied", "alignment_note",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
     "source_pipeline", "schema_version", "redaction_policy", "build_git_sha",
@@ -94,7 +95,8 @@ _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
     "pen_delta_s": np.nan, "pen_delta_sigma": np.nan, "alignment_note": "",
     "accel_still_bias": np.nan, "issue_codes": "", "redaction_policy": "none",
-    "build_git_sha": "", "subject_index": -1, "study_mode": "", "watch_model": "",
+    "build_git_sha": "", "subject_index": -1, "study_mode": "",
+    "watch_model": "", "pen_model": "", "head_model": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
     "head_hz_nominal": np.nan, "head_hz_measured": np.nan,
     "n_writing_tasks": None, "n_idle_tasks": None,
@@ -203,15 +205,17 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     return ""
 
 
-def _check_watch_model(recording_id: str, has_watch: bool, watch_model: object) -> None:
-    """A watch table needs a known model; a recording without one must not claim one."""
-    if has_watch and watch_model not in S.WATCH_MODELS:
-        raise ValueError(
-            f"{recording_id}: watch_model {watch_model!r} is not one of {S.WATCH_MODELS} - "
-            "the adapter must declare the watch hardware"
-        )
-    if not has_watch and watch_model != "":
-        raise ValueError(f"{recording_id}: watch_model {watch_model!r} declared without a watch table")
+def _check_device_models(recording_id: str, row: dict[str, object]) -> None:
+    """A device table needs a model from its vocabulary; a recording without one must not claim one."""
+    for column, (modality, vocabulary) in S.DEVICE_MODEL_COLUMNS.items():
+        present, model = bool(row[f"has_{modality}"]), row[column]
+        if present and model not in vocabulary:
+            raise ValueError(
+                f"{recording_id}: {column} {model!r} is not one of {vocabulary} - "
+                f"the adapter must declare the {modality} hardware"
+            )
+        if not present and model != "":
+            raise ValueError(f"{recording_id}: {column} {model!r} declared without a {modality} table")
 
 
 def table_derived_manifest_values(
@@ -286,7 +290,7 @@ def build_manifest(
         by_modality = b.meta.get("time_domain_by_modality", {})
         row["time_domain"] = _primary_time_domain(by_modality)
         row["alignment_note"] = _alignment_note(row["time_alignment"], by_modality, row["time_domain"])
-        _check_watch_model(b.ref.recording_id, bool(row["has_watch"]), row["watch_model"])
+        _check_device_models(b.ref.recording_id, row)
 
         rows.append(row)
 

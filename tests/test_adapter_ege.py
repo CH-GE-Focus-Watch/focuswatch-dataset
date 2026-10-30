@@ -123,6 +123,14 @@ def test_watch_model_is_se_2(tmp_path):
     assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SE_2
 
 
+def test_pen_model_is_mapped_from_the_logged_pen_name_and_head_model_is_airpods_pro_3(tmp_path):
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    row = build_manifest([a.load(a.discover(tmp_path)[0])]).iloc[0]
+    assert row["pen_model"] == S.PEN_MODEL_NWP_F80
+    assert row["head_model"] == S.HEAD_MODEL_AIRPODS_PRO_3
+
+
 def test_quaternion_columns_pass_through_already_scalar_last(tmp_path):
     write_fixture(tmp_path)
     a = EgeAdapter()

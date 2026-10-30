@@ -32,7 +32,8 @@ def bundle(rid="ML4SCS-S096", with_pen=True, **meta):
                 "pen": "server_wall_clock", "markers": "server_wall_clock",
             },
             "time_alignment": "estimated_delta",
-            "protocol_id": "ml4scs_v2"}
+            "protocol_id": "ml4scs_v2",
+            "pen_model": S.PEN_MODEL_NWP_F130 if with_pen else ""}
     return RecordingBundle(RecordingRef(rid, "ML4SCS-P76", "ML4SCS", "ml4scs", Path(".")),
                            tables, base | meta)
 
@@ -57,6 +58,7 @@ def _head_bundle(rid="AIRPODS-P99", has_head_gyro_meta=True, n=200):
             "gravity_source": "none",
             "time_domain_by_modality": {"headimu": "device_wall_clock"},
             "time_alignment": "shared_clock", "protocol_id": "airpods_attention",
+            "head_model": S.HEAD_MODEL_AIRPODS_PRO_3,
         },
     )
 
@@ -116,6 +118,44 @@ def test_build_manifest_rejects_a_watch_model_without_a_watch_table():
 
     with pytest.raises(ValueError, match="watch_model"):
         build_manifest([head])
+
+
+def test_pen_and_head_models_are_published_from_adapter_meta():
+    pen = build_manifest([bundle()]).iloc[0]
+    head = build_manifest([_head_bundle()]).iloc[0]
+
+    assert pen["pen_model"] == S.PEN_MODEL_NWP_F130
+    assert pen["head_model"] == ""
+    assert head["head_model"] == S.HEAD_MODEL_AIRPODS_PRO_3
+    assert head["pen_model"] == ""
+
+
+def test_an_unknown_pen_model_is_publishable():
+    pen = build_manifest([bundle(pen_model=S.DEVICE_MODEL_UNKNOWN)]).iloc[0]
+
+    assert pen["pen_model"] == S.DEVICE_MODEL_UNKNOWN
+
+
+def test_build_manifest_rejects_an_unknown_head_model():
+    # Every head cohort's headphones are known, so "unknown" is an adapter bug.
+    head_bundle = _head_bundle()
+    head_bundle.meta["head_model"] = S.DEVICE_MODEL_UNKNOWN
+
+    with pytest.raises(ValueError, match="head_model"):
+        build_manifest([head_bundle])
+
+
+def test_build_manifest_rejects_a_pen_model_without_a_pen_table():
+    with pytest.raises(ValueError, match="pen_model"):
+        build_manifest([bundle(with_pen=False, pen_model=S.PEN_MODEL_NWP_F130)])
+
+
+def test_build_manifest_rejects_a_head_recording_without_a_head_model():
+    undeclared = _head_bundle()
+    del undeclared.meta["head_model"]
+
+    with pytest.raises(ValueError, match="head_model"):
+        build_manifest([undeclared])
 
 
 def test_channels_declare_a_unit_for_every_signal_column():
@@ -296,7 +336,7 @@ def test_head_measured_rate_is_derived_not_copied():
         {"head_hz_nominal": None, "head_hz_measured": 999.0,  # deliberately wrong
          "accel_semantics": "user", "accel_calibration": "fused", "gravity_source": "none",
          "time_domain": "device_wall_clock", "time_alignment": "shared_clock",
-         "protocol_id": "airpods_attention"},
+         "protocol_id": "airpods_attention", "head_model": S.HEAD_MODEL_AIRPODS_PRO_3},
     )
     m = build_manifest([b]).iloc[0]
     assert m["head_hz_measured"] == pytest.approx(25.0)

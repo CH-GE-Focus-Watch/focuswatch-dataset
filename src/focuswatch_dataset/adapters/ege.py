@@ -15,7 +15,7 @@ from .. import schema as S
 from ..physics import norm_stats, still_mask
 from ..time_axis import median_rate_hz, sort_stable_by_time, to_unix_ns
 from .base import RecordingBundle, RecordingRef, register
-from .zhaw_web import handedness_from_payload, redact_payload_json
+from .zhaw_web import handedness_from_payload, pen_model_from_payload, redact_payload_json
 
 COHORT = "ZHAW-EGE"
 
@@ -53,8 +53,9 @@ class EgeAdapter:
             if stroke_table is not None:
                 tables["pen"] = stroke_table
         events = d / "events.csv"
-        session_markers, dropped_keys, handedness = (
-            self._markers(events) if events.exists() else (None, 0, "unknown"))
+        session_markers, dropped_keys, handedness, pen_model = (
+            self._markers(events) if events.exists()
+            else (None, 0, "unknown", S.DEVICE_MODEL_UNKNOWN))
         # pen_paper_info and pen_session_sync carry no position,
         # so neither belongs in pen/ - both route to markers/ instead,
         # matching what the SensorLogger adapter already does with
@@ -68,6 +69,8 @@ class EgeAdapter:
 
         meta = {
             "watch_model": S.WATCH_MODEL_SE_2,
+            "pen_model": pen_model if "pen" in tables else "",
+            "head_model": S.HEAD_MODEL_AIRPODS_PRO_3 if "headimu" in tables else "",
             # Why: this source states no nominal wrist rate anywhere (no rate
             # column in imu_samples_rows.csv or sensor_session.csv); declaring
             # one anyway would fabricate a fact the source doesn't carry. The
@@ -201,19 +204,21 @@ class EgeAdapter:
             }))
         return pen, markers
 
-    def _markers(self, path: Path) -> tuple[pd.DataFrame, int, str]:
+    def _markers(self, path: Path) -> tuple[pd.DataFrame, int, str, str]:
         raw = pd.read_csv(path)
         # This export carries the same session_start payload as the
         # SensorLogger one - `user_agent` and `screen` included - so it needs the
         # same allow-list. Cleaning only one adapter left the fingerprint in the
         # published Ege markers.
         redacted = [redact_payload_json(v) for v in raw.get("payload", pd.Series([""] * len(raw)))]
-        handedness = "unknown"
+        handedness, pen_model = "unknown", S.DEVICE_MODEL_UNKNOWN
         starts = raw.index[raw["event_type"].astype(str) == "session_start"]
         if len(starts):
             payload = raw.get("payload", pd.Series([""] * len(raw))).iloc[starts[0]]
             if isinstance(payload, str) and payload.strip():
-                handedness = handedness_from_payload(json.loads(payload))
+                session = json.loads(payload)
+                handedness = handedness_from_payload(session)
+                pen_model = pen_model_from_payload(session)
         out = pd.DataFrame({
             "t_ns": to_unix_ns(raw["t_ms"].to_numpy(), "ms"),
             "event": raw["event_type"].astype(str),
@@ -228,7 +233,7 @@ class EgeAdapter:
             # fail loudly here, not degrade to a silent None in the output.
             "src_t_session_ms": raw["t_session_ms"],
         })
-        return sort_stable_by_time(out), sum(n for _, n in redacted), handedness
+        return sort_stable_by_time(out), sum(n for _, n in redacted), handedness, pen_model
 
 
 register(EgeAdapter())

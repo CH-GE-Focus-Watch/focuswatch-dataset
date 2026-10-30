@@ -107,6 +107,14 @@ def test_watch_model_is_series_6(tmp_path):
     assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SERIES_6
 
 
+def test_pen_model_is_nwp_f130_and_there_is_no_head_model(tmp_path):
+    write_fixture(tmp_path)
+    a = Ml4scsAdapter()
+    row = build_manifest([a.load(a.discover(tmp_path)[0])]).iloc[0]
+    assert row["pen_model"] == S.PEN_MODEL_NWP_F130
+    assert row["head_model"] == ""
+
+
 def test_legacy_recording_has_no_gravity_columns(tmp_path):
     write_fixture(tmp_path, sid="S008", fs=50.0, gravity=False)
     a = Ml4scsAdapter()
