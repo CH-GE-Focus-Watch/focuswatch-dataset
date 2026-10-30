@@ -15,13 +15,16 @@ MAX_BYTES = 1_048_576
 # stroke-free recording can slip under the 1 MB size-rule backstop if
 # extension alone does not stop it (I10). No repo JSON is tracked today
 # (checked via `git ls-files "*.json"`), so nothing needs an allow-list.
-BLOCKED_EXTENSIONS = {".csv", ".parquet", ".zip", ".jsonl", ".json"}
+# .db/.sqlite/.sqlite3 cover the Moleskine app backup (note.db), which holds
+# every stroke with its page coordinates.
+BLOCKED_EXTENSIONS = {".csv", ".parquet", ".zip", ".jsonl", ".json", ".db", ".sqlite", ".sqlite3"}
 
 # Why: .txt is otherwise legitimate (requirements.txt, docs); only these two
-# AirPods ground-truth/protocol filename shapes are capture data.
+# AirPods ground-truth/protocol filename shapes are capture data. The name may
+# end right after the marker: T3's files carry no timestamp suffix.
 TXT_DATA_PATTERNS = (
-    re.compile(r"_ground_truth_"),
-    re.compile(r"_protokoll_"),
+    re.compile(r"_ground_truth(_|\.)"),
+    re.compile(r"_protokoll(_|\.)"),
 )
 
 
