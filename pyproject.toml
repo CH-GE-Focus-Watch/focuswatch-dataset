@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Validated adapters and tooling for the FocusWatch multimodal sensor dataset"
 readme = "README.md"
 requires-python = ">=3.11"
-# The software is Apache-2.0; the separately released dataset is CC BY 4.0.
+# The software is Apache-2.0; the separately released dataset is CC BY-NC 4.0.
 license = "Apache-2.0"
 dependencies = [
     "pandas>=2.0",

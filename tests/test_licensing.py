@@ -1,6 +1,7 @@
 """Software and dataset licensing must remain distinct and citable."""
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -47,13 +48,17 @@ def test_pyproject_declares_the_code_license():
     assert data["project"]["license"] == "Apache-2.0"
 
 
-def test_bundle_carries_a_cc_by_license_file_backing_datapackage_json(tmp_path):
-    """datapackage.json's `licenses` field claims CC-BY-4.0; a LICENSE file
+def test_bundle_carries_a_cc_by_nc_license_file_backing_datapackage_json(tmp_path):
+    """datapackage.json's `licenses` field claims CC-BY-NC-4.0; a LICENSE file
     with that claim's actual text must sit beside it in every built bundle,
     not just be asserted in JSON metadata nobody can read as a legal text.
     """
     out = tmp_path / "out"
     build_dataset(sources(tmp_path), out)
     license_text = (out / "LICENSE").read_text()
-    assert "CC BY 4.0" in license_text
-    assert "creativecommons.org/licenses/by/4.0" in license_text
+    assert "CC BY-NC 4.0" in license_text
+    assert "creativecommons.org/licenses/by-nc/4.0" in license_text
+    package = json.loads((out / "datapackage.json").read_text())
+    assert package["licenses"] == [
+        {"name": "CC-BY-NC-4.0", "path": "https://creativecommons.org/licenses/by-nc/4.0/"}]
+    assert "CC BY-NC 4.0" in (out / "README.md").read_text()
