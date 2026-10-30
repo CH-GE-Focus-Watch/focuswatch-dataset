@@ -309,7 +309,7 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
     if tail_s is not None:
         add("attention_protocol_tail", "attention", round(tail_s, 3),
             "recording length minus the protocol's declared Gesamtdauer - measured "
-            "-0.47 s to +44.55 s across the 25 recordings, 18 within +/-1 s", True)
+            "-14.66 s to +44.55 s across the 38 recordings, 20 within +/-1 s", True)
 
     # accel_semantics must agree with which acceleration columns the
     # motion table actually carries - "total" implies accel_total_*, "user"
