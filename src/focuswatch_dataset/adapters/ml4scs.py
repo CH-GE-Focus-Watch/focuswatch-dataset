@@ -63,6 +63,7 @@ class Ml4scsAdapter:
             tables["markers"] = self._markers(marker_path)
 
         meta = {
+            "watch_model": S.WATCH_MODEL_SERIES_6,
             "watch_hz_nominal": 50.0 if str(row.get("watch_profile")) == "50hz" else 100.0,
             "accel_semantics": "user",
             "accel_calibration": "fused",

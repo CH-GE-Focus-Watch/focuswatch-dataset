@@ -76,6 +76,7 @@ class MoleskineAdapter:
             _database_path(ref.path), int(watch["t_ns"].iloc[0]), int(watch["t_ns"].iloc[-1]),
         )
         meta = {
+            "watch_model": S.WATCH_MODEL_SE_2,
             "watch_hz_nominal": 50.0,
             "accel_semantics": "total",
             "accel_calibration": "raw",

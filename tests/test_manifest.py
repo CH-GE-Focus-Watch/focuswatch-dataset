@@ -24,7 +24,8 @@ def bundle(rid="ML4SCS-S096", with_pen=True, **meta):
     if with_pen:
         tables["pen"] = pd.DataFrame({"t_ns": [0, 1], "dot_type": ["PEN_DOWN", "PEN_UP"],
                                       "x": [1.0, 2.0], "y": [1.0, 2.0]})
-    base = {"watch_hz_nominal": 100.0, "accel_semantics": "user",
+    base = {"watch_model": S.WATCH_MODEL_SERIES_6,
+            "watch_hz_nominal": 100.0, "accel_semantics": "user",
             "accel_calibration": "fused", "gravity_source": "none",
             "time_domain_by_modality": {
                 "watch": "watch_capture_clock",
@@ -84,6 +85,37 @@ def test_build_manifest_rejects_a_partial_gravity_vector():
 
     with pytest.raises(ValueError, match="partial gravity vector"):
         build_manifest([partial])
+
+
+def test_watch_model_is_published_from_adapter_meta():
+    m = build_manifest([bundle(watch_model=S.WATCH_MODEL_SE_2)]).iloc[0]
+    assert m["watch_model"] == S.WATCH_MODEL_SE_2
+
+
+def test_watch_model_is_blank_for_a_recording_without_a_watch():
+    m = build_manifest([_head_bundle()]).iloc[0]
+    assert m["watch_model"] == ""
+
+
+def test_build_manifest_rejects_a_watch_recording_without_a_watch_model():
+    undeclared = bundle()
+    del undeclared.meta["watch_model"]
+
+    with pytest.raises(ValueError, match="watch_model"):
+        build_manifest([undeclared])
+
+
+def test_build_manifest_rejects_an_unknown_watch_model():
+    with pytest.raises(ValueError, match="watch_model"):
+        build_manifest([bundle(watch_model="Apple Watch Ultra")])
+
+
+def test_build_manifest_rejects_a_watch_model_without_a_watch_table():
+    head = _head_bundle()
+    head.meta["watch_model"] = S.WATCH_MODEL_SE_2
+
+    with pytest.raises(ValueError, match="watch_model"):
+        build_manifest([head])
 
 
 def test_channels_declare_a_unit_for_every_signal_column():

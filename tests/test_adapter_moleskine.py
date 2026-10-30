@@ -73,6 +73,13 @@ def test_discovery_uses_a_safe_utc_id_and_does_not_publish_source_names(tmp_path
     assert "Dani" not in ref.participant_id
 
 
+def test_watch_model_is_se_2(tmp_path):
+    write_fixture(tmp_path)
+    adapter = MoleskineAdapter()
+    bundle = adapter.load(adapter.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SE_2
+
+
 def test_load_maps_watch_and_pen_columns_without_inventing_gyro(tmp_path):
     write_fixture(tmp_path)
     adapter = MoleskineAdapter()

@@ -20,6 +20,7 @@ from .validate import Dropout, detect_dropouts
 MANIFEST_COLUMNS = (
     "recording_id", "participant_id", "cohort", "pipeline",
     "has_watch", "has_watch_rawaccel", "has_headimu", "has_pen", "has_markers", "has_attention",
+    "watch_model",
     "watch_hz_nominal", "watch_hz_measured", "has_gravity", "has_quaternion", "has_watch_gyro",
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
@@ -93,7 +94,7 @@ _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
     "pen_delta_s": np.nan, "pen_delta_sigma": np.nan, "alignment_note": "",
     "accel_still_bias": np.nan, "issue_codes": "", "redaction_policy": "none",
-    "build_git_sha": "", "subject_index": -1, "study_mode": "",
+    "build_git_sha": "", "subject_index": -1, "study_mode": "", "watch_model": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
     "head_hz_nominal": np.nan, "head_hz_measured": np.nan,
     "n_writing_tasks": None, "n_idle_tasks": None,
@@ -202,6 +203,17 @@ def _alignment_note(time_alignment: object, by_modality: dict[str, str], primary
     return ""
 
 
+def _check_watch_model(recording_id: str, has_watch: bool, watch_model: object) -> None:
+    """A watch table needs a known model; a recording without one must not claim one."""
+    if has_watch and watch_model not in S.WATCH_MODELS:
+        raise ValueError(
+            f"{recording_id}: watch_model {watch_model!r} is not one of {S.WATCH_MODELS} - "
+            "the adapter must declare the watch hardware"
+        )
+    if not has_watch and watch_model != "":
+        raise ValueError(f"{recording_id}: watch_model {watch_model!r} declared without a watch table")
+
+
 def table_derived_manifest_values(
     b: RecordingBundle, dropouts: dict[str, Dropout] | None = None,
 ) -> dict[str, object]:
@@ -274,6 +286,7 @@ def build_manifest(
         by_modality = b.meta.get("time_domain_by_modality", {})
         row["time_domain"] = _primary_time_domain(by_modality)
         row["alignment_note"] = _alignment_note(row["time_alignment"], by_modality, row["time_domain"])
+        _check_watch_model(b.ref.recording_id, bool(row["has_watch"]), row["watch_model"])
 
         rows.append(row)
 

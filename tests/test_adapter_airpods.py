@@ -302,6 +302,13 @@ def test_gravity_source_agrees_with_the_absent_watch_stream(tmp_path):
     assert bundle.meta["gravity_source"] == "none"
 
 
+def test_no_watch_model_without_a_watch(tmp_path):
+    write_fixture(tmp_path)
+    a = AirPodsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["watch_model"] == ""
+
+
 def test_accel_semantics_still_describes_the_single_motion_stream(tmp_path):
     """Fix-round-2 item 2: unlike gravity_source, accel_semantics is not
     blanked - watch-only scoping is a disambiguation rule
