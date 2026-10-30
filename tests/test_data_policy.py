@@ -36,7 +36,9 @@ def test_small_session_json_is_blocked_by_extension_not_size(tmp_path: Path):
     assert check_paths([small]) != []
 
 
-@pytest.mark.parametrize("ext", [".csv", ".parquet", ".zip", ".jsonl", ".json"])
+@pytest.mark.parametrize(
+    "ext", [".csv", ".parquet", ".zip", ".jsonl", ".json", ".db", ".sqlite", ".sqlite3"],
+)
 def test_blocked_extensions_are_blocked_at_any_size_and_depth(tmp_path: Path, ext: str):
     nested = tmp_path / "a" / "b" / "c"
     nested.mkdir(parents=True)
@@ -83,3 +85,12 @@ def test_violation_message_names_the_rule_that_fired(tmp_path: Path):
     assert "type rule" in csv_violation
     assert "name rule" in txt_violation
     assert "size rule" in md_violation
+
+
+@pytest.mark.parametrize("name", [
+    "T3_ground_truth.txt", "P1_ground_truth.txt", "T1_protokoll.txt", "P2_protokoll_2026.txt",
+])
+def test_rejects_capture_txt_without_a_trailing_suffix(tmp_path: Path, name: str):
+    f = tmp_path / name
+    f.write_text("x")
+    assert check_paths([f]) != []

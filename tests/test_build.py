@@ -325,6 +325,20 @@ def test_cli_validate_rejects_coordinates_without_free_writing_task_structure(tm
     assert main(["validate", "--dataset", str(out)]) == 1
 
 
+def test_cli_validate_rejects_a_restored_marker_payload_coordinate(tmp_path):
+    """Marker payloads are rechecked too, not only the pen table."""
+    out = tmp_path / "out"
+    root = tmp_path / "src" / "sensorlogger"
+    write_sl(root)
+    build_dataset({"sensorlogger": root}, out, policy=RedactionPolicy.ALL_XY)
+    path = next((out / "markers").glob("*.parquet"))
+    markers = read_table(path)
+    markers.loc[markers.index[0], "src_payload"] = json.dumps({"x": 1.0, "y": 2.0})
+    write_table(markers, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
 def test_cli_validate_rejects_a_table_with_the_wrong_embedded_recording_id(tmp_path):
     """The Parquet footer is part of the published archive contract."""
     out = tmp_path / "out"
