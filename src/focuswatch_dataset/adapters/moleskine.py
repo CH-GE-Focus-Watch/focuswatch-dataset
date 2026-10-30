@@ -7,6 +7,7 @@ synchronised, so the published alignment is deliberately ``overlap_only``.
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -30,18 +31,21 @@ _ACCEL = (
 _DRAW_TYPES = {17: "PEN_DOWN", 18: "PEN_MOVE", 20: "PEN_UP"}
 
 # Each session is a different person, as confirmed by the data collector on
-# 2026-10-30; nothing in the source files records this.
-# Keyed by recording id rather than numbered on discovery, so an added or
-# missing file cannot shift everyone else's pseudonym.
-_PARTICIPANT_BY_RECORDING = {
-    "MOLESKINE-20240822T121207869Z": "MOLESKINE-P01",
-    "MOLESKINE-20240822T133828199Z": "MOLESKINE-P02",
-    "MOLESKINE-20240826T104309635Z": "MOLESKINE-P03",
-    "MOLESKINE-20240827T081907827Z": "MOLESKINE-P04",
-    "MOLESKINE-20240827T082807736Z": "MOLESKINE-P05",
-    "MOLESKINE-20240827T090441625Z": "MOLESKINE-P06",
-    "MOLESKINE-20240827T093950704Z": "MOLESKINE-P07",
-    "MOLESKINE-20240827T122921353Z": "MOLESKINE-P08",
+# 2026-10-30; nothing in the source files records this. Sessions are numbered
+# in chronological order and keyed by their start instant rather than numbered
+# on discovery, so an added or missing file cannot shift the others. The key
+# is a SHA-256 prefix of the start in Unix milliseconds, so the published ids
+# and this table carry no recording date. That keeps the date out of plain
+# view; it is not a cryptographic guarantee.
+_SESSION_BY_START = {
+    "dfc2188da4de34e9": "01",
+    "3a8d807106380f4a": "02",
+    "97b3341c44693524": "03",
+    "34f6ee61f8623b6f": "04",
+    "994b83957ab7f63f": "05",
+    "4712ccaf3f9d1493": "06",
+    "e8807e082959d6d3": "07",
+    "43ef83326fb4ec6d": "08",
 }
 
 
@@ -49,9 +53,9 @@ def _database_path(watch_path: Path) -> Path:
     return watch_path.parent.parent / "moleskine" / "backup-db" / "note.db"
 
 
-def _recording_id(t_ns: int) -> str:
-    timestamp = pd.Timestamp(t_ns, unit="ns", tz="UTC")
-    return f"{COHORT}-{timestamp.strftime('%Y%m%dT%H%M%S')}{timestamp.microsecond // 1000:03d}Z"
+def _session_number(t_ns: int) -> str | None:
+    key = hashlib.sha256(str(t_ns // 1_000_000).encode()).hexdigest()[:16]
+    return _SESSION_BY_START.get(key)
 
 
 class MoleskineAdapter:
@@ -67,22 +71,21 @@ class MoleskineAdapter:
 
         refs = []
         for path in watch_files:
-            # Why: the earliest timestamp, not the first row. The recording id
+            # Why: the earliest timestamp, not the first row. The session key
             # must name the same instant as the bundle's session_start_ns, which
             # load() reads off the time-sorted table. Trusting row order would
-            # let an out-of-order export produce an id that dates the recording
-            # to a sample somewhere in its middle.
+            # let an out-of-order export key the recording by a sample
+            # somewhere in its middle.
             times = pd.read_csv(path, usecols=[_TIME])
             if times.empty:
                 raise ValueError(f"{path}: watch CSV is empty")
-            t_ns = int(parse_iso_to_unix_ns(times[_TIME]).min())
-            recording_id = _recording_id(t_ns)
+            number = _session_number(int(parse_iso_to_unix_ns(times[_TIME]).min()))
             # The filename labels are never used: three files carry informal
             # labels, two of them first names, which would leak into public ids.
-            if recording_id not in _PARTICIPANT_BY_RECORDING:
-                raise ValueError(f"{path}: no participant assigned to {recording_id}")
+            if number is None:
+                raise ValueError(f"{path}: no session number assigned to this recording start")
             refs.append(RecordingRef(
-                recording_id, _PARTICIPANT_BY_RECORDING[recording_id], COHORT, self.name, path,
+                f"{COHORT}-S{number}", f"{COHORT}-P{number}", COHORT, self.name, path,
             ))
         return refs
 

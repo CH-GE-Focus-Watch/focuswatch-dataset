@@ -63,11 +63,11 @@ def write_fixture(root, *, draw_types=(17, 18, 18, 20), page_ids=None):
     return root
 
 
-def test_discovery_uses_a_safe_utc_id_and_does_not_publish_source_names(tmp_path):
+def test_discovery_publishes_neither_the_start_time_nor_source_names(tmp_path):
     write_fixture(tmp_path)
     [ref] = MoleskineAdapter().discover(tmp_path)
 
-    assert ref.recording_id == "MOLESKINE-20240822T121207869Z"
+    assert ref.recording_id == "MOLESKINE-S01"
     assert ref.participant_id == "MOLESKINE-P01"
     assert "Dani" not in ref.recording_id
     assert "Dani" not in ref.participant_id
@@ -82,7 +82,7 @@ def test_discovery_rejects_a_session_without_an_assigned_participant(tmp_path):
     ).astype(str)
     watch.to_csv(csv, index=False)
 
-    with pytest.raises(ValueError, match="no participant assigned"):
+    with pytest.raises(ValueError, match="no session number assigned"):
         MoleskineAdapter().discover(tmp_path)
 
 
@@ -160,25 +160,21 @@ def test_load_rejects_unknown_draw_type(tmp_path):
         adapter.load(adapter.discover(tmp_path)[0])
 
 
-def test_recording_id_dates_the_recording_start_even_if_rows_are_out_of_order(tmp_path):
-    """The id and session_start_ns must name the same instant.
+def test_session_is_keyed_by_the_recording_start_even_if_rows_are_out_of_order(tmp_path):
+    """The session key and session_start_ns must name the same instant.
 
     discover() reads only the timestamp column and load() sorts the table, so
-    reading an id off the first row would date a recording to a sample in its
-    middle as soon as an export is not written chronologically.
+    keying a session off the first row would use a sample in its middle as
+    soon as an export is not written chronologically, and find no session.
     """
     write_fixture(tmp_path)
     csv = next((tmp_path / "sensorlog").glob("*.csv"))
     rows = pd.read_csv(csv)
     pd.concat([rows.iloc[[-1]], rows.iloc[:-1]]).to_csv(csv, index=False)
 
-    adapter = MoleskineAdapter()
-    ref = adapter.discover(tmp_path)[0]
-    start = pd.Timestamp(adapter.load(ref).meta["session_start_ns"], unit="ns", tz="UTC")
+    [ref] = MoleskineAdapter().discover(tmp_path)
 
-    assert ref.recording_id == (
-        f"MOLESKINE-{start.strftime('%Y%m%dT%H%M%S')}{start.microsecond // 1000:03d}Z"
-    )
+    assert ref.recording_id == "MOLESKINE-S01"
 
 
 def test_load_closes_the_database_handle(tmp_path, monkeypatch):

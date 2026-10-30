@@ -23,9 +23,10 @@ rate, and time domain. Modality files use one uniform layout:
 
 Participant identifiers are source-scoped, not a defensible count of distinct
 people across cohorts. The eight Moleskine sessions are eight different people,
-as confirmed by the data collector, and use the pseudonyms `MOLESKINE-P01` to
-`MOLESKINE-P08` in chronological order; the raw filenames' informal labels are
-not published.
+as confirmed by the data collector. They are numbered in chronological order:
+recording `MOLESKINE-S01` belongs to participant `MOLESKINE-P01`, up to `S08`
+and `P08`. Neither the raw filenames' informal labels nor the recording dates
+are published.
 
 ## Install
 
