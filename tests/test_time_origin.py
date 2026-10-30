@@ -85,3 +85,11 @@ def test_payload_fields_already_relative_to_the_session_stay_as_they_are():
     out = rebase_bundle(bundle, TimeOrigin.RECORDING_START)
 
     assert json.loads(out.tables["markers"]["src_payload"].iloc[0]) == {"session_start_t_ms": 2.0}
+
+
+def test_a_long_recording_is_not_mistaken_for_unix_milliseconds():
+    """Two hours after the start, t_ns is 7.2e12 - inside the Unix ms range."""
+    df = pd.DataFrame({"t_ns": np.array([0, 7_200_000_000_000], dtype=np.int64),
+                       "t_start_ns": [0, 1_500_000_000_000],
+                       "t_end_ns": [1_000_000_000, 1_600_000_000_000]})
+    assert epoch_columns(df) == []

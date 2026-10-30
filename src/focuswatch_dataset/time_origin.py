@@ -28,6 +28,9 @@ PAYLOAD_COLUMN = "src_payload"
 # nanoseconds. Seconds are left out on purpose: an uptime counter in
 # milliseconds reaches 1e9 after 12 days and would read as a date.
 _EPOCH_RANGES = ((1e12, 2e12), (1e15, 2e15), (1e18, 2e18))
+# A nanosecond column is only checked against the nanosecond range: 17 minutes
+# after the recording start it reaches 1e12, which would read as Unix ms.
+_EPOCH_NS_RANGE = ((1e18, 2e18),)
 
 
 class TimeOrigin(StrEnum):
@@ -126,9 +129,9 @@ def rebase_bundle(bundle: RecordingBundle,
     return RecordingBundle(bundle.ref, tables, meta)
 
 
-def _is_epoch(values: np.ndarray) -> bool:
+def _is_epoch(values: np.ndarray, ranges=_EPOCH_RANGES) -> bool:
     magnitude = np.abs(values[np.isfinite(values)])
-    return any(((magnitude >= lo) & (magnitude < hi)).any() for lo, hi in _EPOCH_RANGES)
+    return any(((magnitude >= lo) & (magnitude < hi)).any() for lo, hi in ranges)
 
 
 def _payload_numbers(value) -> list[float]:
@@ -151,6 +154,7 @@ def epoch_columns(df: pd.DataFrame) -> list[str]:
             if numbers and _is_epoch(np.asarray(numbers, dtype=float)):
                 found.append(column)
         elif pd.api.types.is_numeric_dtype(df[column]) and not pd.api.types.is_bool_dtype(df[column]):
-            if _is_epoch(df[column].to_numpy(dtype=float)):
+            ranges = _EPOCH_NS_RANGE if column in NS_COLUMNS else _EPOCH_RANGES
+            if _is_epoch(df[column].to_numpy(dtype=float), ranges):
                 found.append(column)
     return found
