@@ -77,8 +77,8 @@ class MoleskineAdapter:
                 raise ValueError(f"{path}: watch CSV is empty")
             t_ns = int(parse_iso_to_unix_ns(times[_TIME]).min())
             recording_id = _recording_id(t_ns)
-            # The filename labels are never used: three are informal names, so
-            # they would leak source names into public ids.
+            # The filename labels are never used: three files carry informal
+            # labels, two of them first names, which would leak into public ids.
             if recording_id not in _PARTICIPANT_BY_RECORDING:
                 raise ValueError(f"{path}: no participant assigned to {recording_id}")
             refs.append(RecordingRef(
