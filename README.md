@@ -200,6 +200,31 @@ labelled = preprocess_recordings(root, ids, config)
 The two label columns are never merged into one: writing and attention are
 different questions with different ground truth.
 
+## Pen sampling rate
+
+A pen reports dots only while it touches the paper, so it has no fixed sample
+rate, and none of the manufacturers we checked states one. The manifest gives
+the dots per second within strokes as `pen_hz_measured` and names the clock
+it was measured on in `pen_hz_clock`. The pen's own clock (`src_timestamp`)
+is used where the source logs it. Otherwise `t_ns` is used, but only if it
+stamps dots one by one, not in Bluetooth batches. Measured on the current
+release candidate:
+
+| Pen model | Clock | Recordings | Median | Range |
+| --- | --- | ---: | ---: | --- |
+| Moleskine Smart Pen NWP-F130 | `src_timestamp` | 33 | 79.2 Hz | 68.2–83.5 Hz |
+| Moleskine Smart Pen NWP-F130 | `t_ns` | 8 | 39.0 Hz | 31.1–39.5 Hz |
+| Neo smartpen M1 NWP-F50 | `src_timestamp` | 1 | 70.0 Hz | – |
+| LAMY safari ncode NWP-F80 | `src_timestamp` | 1 | 45.1 Hz | – |
+| LAMY safari ncode NWP-F80 | `t_ns` | 2 | 48.7 Hz | 46.9–50.5 Hz |
+| unknown | `src_timestamp` | 1 | 69.1 Hz | – |
+
+Four NWP-F50 recordings stay `NaN`: their `t_ns` arrives in Bluetooth
+batches. On recordings that log both clocks, `t_ns` gave a rate 2–13 % above
+the pen clock. The eight Moleskine-cohort recordings show about half the
+NWP-F130 rate of the ML4SCS cohort; the cause is not known. Each bundle's
+`data_dictionary.md` repeats this table for its own recordings.
+
 ## Important limitations
 
 - Moleskine watch and pen streams use independent wall clocks. They are paired

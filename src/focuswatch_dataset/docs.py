@@ -206,6 +206,22 @@ _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
 )
 
 
+def _pen_rate_summary(manifest: pd.DataFrame) -> list[str]:
+    pen = manifest[manifest["has_pen"]]
+    if pen.empty:
+        return []
+    lines = ["Measured rates per pen model in this bundle:", "",
+             "| pen_model | pen_hz_clock | recordings | median Hz | range Hz |",
+             "|---|---|---:|---:|---|"]
+    for (model, clock), group in pen.groupby(["pen_model", "pen_hz_clock"]):
+        hz = group["pen_hz_measured"].dropna()
+        median, span = ((f"{hz.median():.1f}", f"{hz.min():.1f}-{hz.max():.1f}") if len(hz)
+                        else ("-", "-"))
+        lines.append(f"| {model} | {f'`{clock}`' if clock else 'empty'} | {len(group)} "
+                     f"| {median} | {span} |")
+    return [*lines, ""]
+
+
 def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
     # channels.parquet declares time domains per recording, modality, and
     # column because canonical and provenance timestamps can use different clocks.
@@ -283,12 +299,21 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         "## Pen sampling rate", "",
         "A pen reports dots only while it touches the paper, so it has no fixed sample "
         "rate. `pen_hz_measured` in `sessions.parquet`, and `sample_rate_hz` on the pen "
-        "rows of `channels.parquet`, give the dots per second within strokes, measured on "
-        "the pen's own clock (`src_timestamp`). Recordings without a pen-device timestamp "
-        "have `NaN` there: their `t_ns` is the backend's arrival time, which comes in "
-        "Bluetooth batches and would misstate the rate. Dots are also dropped during "
-        "fast strokes, so the rate is an average, not the camera frame rate. There is no "
-        "nominal pen rate: the manufacturer specifications we found do not state one.", ""]
+        "rows of `channels.parquet`, give the dots per second within strokes. "
+        "`pen_hz_clock` names the clock it was measured on:", "",
+        "| `pen_hz_clock` | Meaning |",
+        "|---|---|",
+        "| `src_timestamp` | The pen's own clock. Preferred wherever the source logs it. |",
+        "| `t_ns` | No pen clock is logged, and at most 20 % of the intervals within strokes "
+        "are zero, so `t_ns` stamps dots one by one. On recordings that log both clocks, "
+        "`t_ns` at this level gave a rate 2-13 % above the pen clock. |",
+        "| empty | Not measurable: `pen_hz_measured` is `NaN`. `t_ns` is the backend's "
+        "arrival time in Bluetooth batches that share one timestamp and would inflate "
+        "the rate. |", "",
+        "Dots are also dropped during fast strokes, so the rate is an average, not a "
+        "fixed sensor frequency. There is no nominal pen rate: the manufacturer "
+        "specifications we found do not state one.", "",
+        *_pen_rate_summary(manifest)]
 
     summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))

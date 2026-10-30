@@ -1244,6 +1244,19 @@ def test_data_dictionary_points_to_manifest_for_pen_units_without_repeating_ids(
         assert str(r.recording_id) not in text
 
 
+def test_data_dictionary_lists_pen_rates_per_model_and_clock(tmp_path):
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out)
+    manifest = load_manifest(out)
+    text = (out / "data_dictionary.md").read_text()
+
+    assert "| pen_model | pen_hz_clock | recordings | median Hz | range Hz |" in text
+    pen = manifest.loc[manifest["has_pen"]]
+    for (model, clock), group in pen.groupby(["pen_model", "pen_hz_clock"]):
+        clock_cell = f"`{clock}`" if clock else "empty"
+        assert f"| {model} | {clock_cell} | {len(group)} |" in text
+
+
 def test_data_dictionary_explains_pen_limitations_without_source_details(tmp_path):
     """The public dictionary needs limitations, not source rows or recordings."""
     out = tmp_path / "out"

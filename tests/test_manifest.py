@@ -495,6 +495,7 @@ def test_pen_rate_is_the_in_stroke_dot_rate_on_the_pen_clock():
     channels = build_channels([b])
 
     assert m["pen_hz_measured"] == pytest.approx(80.0)
+    assert m["pen_hz_clock"] == "src_timestamp"
     pen_rates = channels.loc[channels["modality"] == "pen", "sample_rate_hz"]
     assert pen_rates.eq(m["pen_hz_measured"]).all()
 
@@ -506,7 +507,45 @@ def test_pen_rate_is_nan_without_the_pen_clock():
     m = build_manifest([b]).iloc[0]
 
     assert np.isnan(m["pen_hz_measured"])
+    assert m["pen_hz_clock"] == ""
     assert build_channels([b]).query("modality == 'pen'")["sample_rate_hz"].isna().all()
+
+
+def _pen_on_t_ns(stroke_ms):
+    """One table per call: each list is a stroke, its values the dots' t_ns in ms."""
+    return pd.DataFrame({
+        "t_ns": np.concatenate([np.asarray(s, dtype=np.int64) * 1_000_000 for s in stroke_ms]),
+        "dot_type": [t for s in stroke_ms
+                     for t in ["PEN_DOWN", *["PEN_MOVE"] * (len(s) - 2), "PEN_UP"]],
+        "src_timestamp": np.nan,
+    })
+
+
+def test_pen_rate_falls_back_to_t_ns_stamped_dot_by_dot():
+    """Without a pen clock, a t_ns that stamps every dot on its own measures the rate."""
+    b = bundle()
+    b.tables["pen"] = _pen_on_t_ns([[1000, 1025, 1050, 1075], [6000, 6025, 6050, 6075]])
+    m = build_manifest([b]).iloc[0]
+
+    assert m["pen_hz_measured"] == pytest.approx(40.0)
+    assert m["pen_hz_clock"] == "t_ns"
+    pen_rates = build_channels([b]).query("modality == 'pen'")["sample_rate_hz"]
+    assert pen_rates.eq(40.0).all()
+
+
+@pytest.mark.parametrize("stroke_ms, clock", [
+    # 1 of 5 in-stroke intervals is zero: 20 %, still dot by dot.
+    ([0, 25, 25, 50, 75, 100], "t_ns"),
+    # 2 of 5 are zero: batched, the rate would be inflated.
+    ([0, 25, 25, 50, 50, 75], ""),
+])
+def test_pen_rate_on_t_ns_stops_at_the_batched_share(stroke_ms, clock):
+    b = bundle()
+    b.tables["pen"] = _pen_on_t_ns([stroke_ms])
+    m = build_manifest([b]).iloc[0]
+
+    assert m["pen_hz_clock"] == clock
+    assert np.isnan(m["pen_hz_measured"]) == (clock == "")
 
 
 def test_pen_rate_is_derived_not_copied():

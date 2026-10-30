@@ -29,7 +29,7 @@ MANIFEST_COLUMNS = (
     "time_domain", "time_alignment", "time_origin", "t_start_ns", "t_end_ns", "duration_s",
     "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
     "watch_wrist_side", "handedness",
-    "pen_model", "pen_hz_measured", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
+    "pen_model", "pen_hz_measured", "pen_hz_clock", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
     "delta_applied", "alignment_note",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
     "source_pipeline", "schema_version", "redaction_policy", "build_git_sha",
@@ -38,7 +38,7 @@ MANIFEST_COLUMNS = (
 TABLE_DERIVED_MANIFEST_COLUMNS = (
     *S.MODALITY_FLAGS,
     *S.CAPABILITY_FLAG_COLUMNS,
-    "watch_hz_measured", "head_hz_measured", "pen_hz_measured",
+    "watch_hz_measured", "head_hz_measured", "pen_hz_measured", "pen_hz_clock",
     "t_start_ns", "t_end_ns", "duration_s",
     "n_writing_tasks", "n_idle_tasks",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
@@ -78,7 +78,9 @@ _INTERNAL_META_KEYS = frozenset({
 # from the meta merge alongside them, even though they are not gated by
 # check_coverage and so are not part of the shared flag/modality table.
 _STRUCTURAL_FLAGS = frozenset(S.CAPABILITY_FLAG_MODALITY)
-_DERIVED_MEASURED_FIELDS = frozenset({"watch_hz_measured", "head_hz_measured", "pen_hz_measured"})
+_DERIVED_MEASURED_FIELDS = frozenset({
+    "watch_hz_measured", "head_hz_measured", "pen_hz_measured", "pen_hz_clock",
+})
 _DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
 # Why: both are computed from meta["time_domain_by_modality"] (see
 # _primary_time_domain/_alignment_note below), not declared independently by
@@ -101,6 +103,7 @@ _DEFAULTS: dict[str, object] = {
     "watch_model": "", "pen_model": "", "head_model": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
     "head_hz_nominal": np.nan, "head_hz_measured": np.nan, "pen_hz_measured": np.nan,
+    "pen_hz_clock": "",
     "n_writing_tasks": None, "n_idle_tasks": None,
     "pen_xy_unit": "", "pen_pressure_scale": "",
     "accel_semantics": "", "accel_calibration": "", "gravity_source": "none",
@@ -119,27 +122,49 @@ def _rate(df: pd.DataFrame | None) -> float:
 
 # The pen's own clock, in milliseconds. Present only where the source logs it.
 _PEN_DEVICE_CLOCK = "src_timestamp"
+# Why 0.2: on the 34 release recordings that log both clocks, a t_ns with at
+# most 20 % zero in-stroke intervals overstated the pen-clock rate by 2-13 %;
+# from 26 % on it overstated it by about 38 %.
+_MAX_BATCHED_SHARE = 0.2
 
 
-def _pen_dot_rate(pen: pd.DataFrame | None) -> float:
-    """Dots per second while the pen touches the paper, on the pen's own clock.
+def _strokes(dots: pd.DataFrame) -> pd.Series:
+    return (dots["dot_type"] == "PEN_DOWN").cumsum()
 
-    A pen emits dots only during a stroke, so a median over the whole table
-    mixes in every pause. t_ns does not work either: the ZHAW backend stamps
-    dots on arrival, in Bluetooth batches that share one timestamp. The pen
-    clock has neither problem, so a table without it gets NaN, not a guess.
-    """
-    if pen is None or _PEN_DEVICE_CLOCK not in pen.columns or "dot_type" not in pen.columns:
-        return np.nan
-    dots = pen[pen[_PEN_DEVICE_CLOCK].notna()]
-    stroke = (dots["dot_type"] == "PEN_DOWN").cumsum()
-    clock = dots.groupby(stroke)[_PEN_DEVICE_CLOCK]
-    span_s = (clock.max() - clock.min()) / 1e3
+
+def _stroke_rate(dots: pd.DataFrame, column: str, ticks_per_s: float) -> float:
+    clock = dots.groupby(_strokes(dots))[column]
+    span_s = (clock.max() - clock.min()) / ticks_per_s
     intervals = clock.size() - 1
     timed = span_s > 0
     if not timed.any():
         return np.nan
     return round(float(intervals[timed].sum() / span_s[timed].sum()), 3)
+
+
+def _batched_share(pen: pd.DataFrame) -> float:
+    gaps = pen.groupby(_strokes(pen))[S.TIME_COLUMN].diff().dropna()
+    return float((gaps == 0).mean()) if len(gaps) else np.nan
+
+
+def _pen_dot_rate(pen: pd.DataFrame | None) -> tuple[float, str]:
+    """Dots per second while the pen touches the paper, and the clock it was measured on.
+
+    A pen emits dots only during a stroke, so a median over the whole table
+    mixes in every pause. The pen's own clock is used wherever it is logged.
+    Without it, t_ns stands in only if it stamps dots one by one: the ZHAW
+    backend stamps them on arrival, in Bluetooth batches that share one
+    timestamp and would inflate the rate. Such a table gets NaN, not a guess.
+    """
+    if pen is None or "dot_type" not in pen.columns:
+        return np.nan, ""
+    if _PEN_DEVICE_CLOCK in pen.columns and pen[_PEN_DEVICE_CLOCK].notna().any():
+        rate = _stroke_rate(pen[pen[_PEN_DEVICE_CLOCK].notna()], _PEN_DEVICE_CLOCK, 1e3)
+        return (rate, _PEN_DEVICE_CLOCK) if np.isfinite(rate) else (np.nan, "")
+    if S.TIME_COLUMN not in pen.columns or not _batched_share(pen) <= _MAX_BATCHED_SHARE:
+        return np.nan, ""
+    rate = _stroke_rate(pen, S.TIME_COLUMN, 1e9)
+    return (rate, S.TIME_COLUMN) if np.isfinite(rate) else (np.nan, "")
 
 
 def _task_counts(markers: pd.DataFrame | None) -> tuple[int | None, int | None]:
@@ -244,8 +269,8 @@ def table_derived_manifest_values(
         "n_samples_head": len(b.tables.get("headimu", [])),
         "watch_hz_measured": np.nan,
         "head_hz_measured": np.nan,
-        "pen_hz_measured": _pen_dot_rate(b.tables.get("pen")),
     }
+    row["pen_hz_measured"], row["pen_hz_clock"] = _pen_dot_rate(b.tables.get("pen"))
     for modality in S.MODALITIES:
         row[f"has_{modality}"] = modality in b.tables
     for flag, columns in S.CAPABILITY_FLAG_COLUMNS.items():
@@ -429,7 +454,7 @@ def table_column_descriptor_values(df: pd.DataFrame, column: str,
         "frame": frame,
         # Why: a pen table is an event stream, so it reports the in-stroke dot
         # rate the manifest publishes, not a median over pauses and batches.
-        "sample_rate_hz": _pen_dot_rate(df) if "dot_type" in df.columns else _rate(df),
+        "sample_rate_hz": _pen_dot_rate(df)[0] if "dot_type" in df.columns else _rate(df),
     }
 
 
