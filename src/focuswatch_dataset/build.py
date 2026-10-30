@@ -20,6 +20,7 @@ from .adapters import base
 from .adapters.base import RecordingBundle
 from .manifest import build_channels, build_manifest, check_manifest_consistency
 from .redact import RedactionPolicy, redact_bundle
+from .time_origin import TimeOrigin, rebase_bundle
 from .validate import (
     Dropout, Finding, ValidationReport, check_coverage, detect_dropouts, validate_bundle,
 )
@@ -229,7 +230,8 @@ def _promote(staging: Path, out: Path) -> None:
 
 def build_dataset(source_roots: dict[str, Path], out: Path,
                   policy: RedactionPolicy = RedactionPolicy.NONE,
-                  strict: bool = True) -> ValidationReport:
+                  strict: bool = True,
+                  time_origin: TimeOrigin = TimeOrigin.UNIX_EPOCH) -> ValidationReport:
     out = Path(out)
     _warn_about_interrupted_promotions(out)
     _refuse_foreign_directory(out)
@@ -255,6 +257,9 @@ def build_dataset(source_roots: dict[str, Path], out: Path,
         # redaction_policy meta can never disagree with what was
         # actually done to the pen table (see redact.py's docstring).
         bundle = redact_bundle(bundle, policy)
+        # Before validation, so validation_report.json checks and quotes the
+        # published timestamps, not the source clocks they were rebased from.
+        bundle = rebase_bundle(bundle, time_origin)
         bundle_dropouts = detect_dropouts(bundle.tables)
         dropouts[bundle.ref.recording_id] = bundle_dropouts
         report.findings += validate_bundle(bundle, bundle_dropouts)

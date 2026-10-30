@@ -14,6 +14,7 @@ from .preprocess import (
     write_preprocessed,
 )
 from .redact import RedactionPolicy
+from .time_origin import TimeOrigin
 from .validate import validate_dataset
 
 
@@ -42,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument(
         "--redact", choices=[p.value for p in RedactionPolicy], required=True,
         help="required explicit pen-coordinate policy; use all_xy for a public release",
+    )
+    b.add_argument(
+        "--time-origin", choices=[o.value for o in TimeOrigin], required=True,
+        help="required explicit timestamp origin; use recording_start for a public release",
     )
     b.add_argument("--no-strict", action="store_true")
 
@@ -82,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             roots = _source_roots(args.source)
             report = build_dataset(roots, Path(args.out),
-                                   RedactionPolicy(args.redact), strict=not args.no_strict)
+                                   RedactionPolicy(args.redact), strict=not args.no_strict,
+                                   time_origin=TimeOrigin(args.time_origin))
         except (RuntimeError, ValueError) as exc:
             # Why: a physical-check failure, a coverage gap, a manifest
             # inconsistency and a load/discovery failure all surface here as

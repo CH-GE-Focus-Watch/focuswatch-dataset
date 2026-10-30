@@ -15,6 +15,7 @@ import pandas as pd
 from . import schema as S
 from .adapters.base import RecordingBundle
 from .time_axis import median_rate_hz
+from .time_origin import TimeOrigin, recording_span
 from .validate import Dropout, detect_dropouts
 
 MANIFEST_COLUMNS = (
@@ -25,7 +26,7 @@ MANIFEST_COLUMNS = (
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
     "head_model",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
-    "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
+    "time_domain", "time_alignment", "time_origin", "t_start_ns", "t_end_ns", "duration_s",
     "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
     "watch_wrist_side", "handedness",
     "pen_model", "pen_hz_measured", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
@@ -95,6 +96,7 @@ _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
     "pen_delta_s": np.nan, "pen_delta_sigma": np.nan, "alignment_note": "",
     "accel_still_bias": np.nan, "issue_codes": "", "redaction_policy": "none",
+    "time_origin": TimeOrigin.UNIX_EPOCH.value,
     "build_git_sha": "", "subject_index": -1, "study_mode": "",
     "watch_model": "", "pen_model": "", "head_model": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
@@ -106,22 +108,6 @@ _DEFAULTS: dict[str, object] = {
     "source_pipeline": "",
     **{flag: False for flag in _STRUCTURAL_FLAGS},
 }
-
-
-def _span(bundle: RecordingBundle) -> tuple[int, int]:
-    starts, ends = [], []
-    for df in bundle.tables.values():
-        if not len(df):
-            continue
-        # Why: interval tables carry start and end separately. Reading the end
-        # from t_start_ns would drop the final interval from the duration.
-        if {"t_start_ns", "t_end_ns"} <= set(df.columns):
-            starts.append(int(df["t_start_ns"].min()))
-            ends.append(int(df["t_end_ns"].max()))
-        elif S.TIME_COLUMN in df.columns:
-            starts.append(int(df[S.TIME_COLUMN].min()))
-            ends.append(int(df[S.TIME_COLUMN].max()))
-    return (min(starts), max(ends)) if starts else (0, 0)
 
 
 def _rate(df: pd.DataFrame | None) -> float:
@@ -247,7 +233,7 @@ def table_derived_manifest_values(
     b: RecordingBundle, dropouts: dict[str, Dropout] | None = None,
 ) -> dict[str, object]:
     """Manifest fields whose values are determined entirely by published tables."""
-    t0, t1 = _span(b)
+    t0, t1 = recording_span(b.tables)
     row: dict[str, object] = {
         "recording_id": b.ref.recording_id, "participant_id": b.ref.participant_id,
         "cohort": b.ref.cohort, "pipeline": b.ref.pipeline,
