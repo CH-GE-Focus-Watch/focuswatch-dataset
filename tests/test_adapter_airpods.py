@@ -25,6 +25,10 @@ PROTOCOL = (
 
 
 def write_fixture(root, pid="P1", n=15500, fs=25.0, with_protocol=True):
+    """Lay out one recording as the study export does: P with labelled
+    samples under daten/csv-dateien, T with an empty label column under
+    daten/T-CSVs, each beside its own protocol folder."""
+    test_cohort = pid.startswith("T")
     rng = np.random.default_rng(3)
     # Why: small perturbations around an upright head orientation, not a full
     # SO(3)-random sample - a head never tips upside down during a recording
@@ -42,6 +46,11 @@ def write_fixture(root, pid="P1", n=15500, fs=25.0, with_protocol=True):
     # duration now runs past the last GT offset (570 s) so every emitted
     # attention interval is well-formed (t_start_ns <= t_end_ns).
     labels = np.select([t_rel < 240, t_rel < 570], ["focused", "distracted"], default="focused")
+    if test_cohort:
+        labels = np.full(n, "")
+    csv_dir = root / "daten" / ("T-CSVs" if test_cohort else "csv-dateien")
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    csv_name = f"{pid}_17m30s_airpod_motion_2026-04-28_14-47-30{'' if test_cohort else '_labeled'}.csv"
     pd.DataFrame({
         "timestamp_iso": iso, "sensor_timestamp_s": 6679.42 + t_rel,
         "attitude_roll_rad": 0.0, "attitude_pitch_rad": 0.0, "attitude_yaw_rad": 0.0,
@@ -54,8 +63,8 @@ def write_fixture(root, pid="P1", n=15500, fs=25.0, with_protocol=True):
         "user_acceleration_y_g": rng.normal(0, 0.015, n),
         "user_acceleration_z_g": rng.normal(0, 0.015, n),
         "label": labels,
-    }).to_csv(root / f"{pid}_17m30s_airpod_motion_2026-04-28_14-47-30_labeled.csv", index=False)
-    gt = root / "1_Data_Protocols+GroundTruth"
+    }).to_csv(csv_dir / csv_name, index=False)
+    gt = root / ("protokolle_T" if test_cohort else "protokolle_P")
     gt.mkdir(exist_ok=True)
     (gt / f"{pid}_ground_truth_2026-04-28_13-40-36.txt").write_text(GT)
     if with_protocol:
@@ -75,12 +84,60 @@ def test_parse_protocol():
     ]
 
 
+def test_parse_protocol_skips_blocks_a_dropout_cut_off():
+    # P20's corrected protocol: a status column, and two blocks that never ran.
+    corrected = (
+        "  1 |   0:00 |   4:00 |   4:00 | distracted  | Handy benutzen                      | vollstaendig\n"
+        "  2 |   4:00 |   4:09 |   0:09 | focused     | Loses Herumschauen                  | TEILWEISE (Sensor-Dropout)\n"
+        "  3 |  20:00 |  23:00 |   3:00 | focused     | Arbeiten / Schreiben am Laptop      | ENTFALLEN\n"
+    )
+    assert parse_protocol(corrected) == [
+        (0.0, 240.0, "distracted", "Handy benutzen"),
+        (240.0, 249.0, "focused", "Loses Herumschauen"),
+    ]
+
+
 def test_discover_prefixes_the_participant_id(tmp_path):
     write_fixture(tmp_path, pid="P17")
     ref = AirPodsAdapter().discover(tmp_path)[0]
     # Why: AirPods P17 and ML4SCS P17 are different people.
     assert ref.recording_id == "AIRPODS-P17"
     assert ref.participant_id == "AIRPODS-P17"
+
+
+def test_discover_finds_the_development_and_the_test_cohort(tmp_path):
+    write_fixture(tmp_path, pid="P3")
+    write_fixture(tmp_path, pid="T4")
+    ids = [r.recording_id for r in AirPodsAdapter().discover(tmp_path)]
+    assert ids == ["AIRPODS-P3", "AIRPODS-T4"]
+
+
+def test_test_cohort_loads_without_per_sample_labels(tmp_path):
+    # T ships an empty label column, so there is no expansion to cross-check.
+    write_fixture(tmp_path, pid="T2")
+    a = AirPodsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert bundle.tables["attention"]["label"].tolist() == ["focused", "distracted", "focused"]
+    assert "label" not in bundle.tables["headimu"].columns
+
+
+def test_missing_ground_truth_fails_loudly(tmp_path):
+    write_fixture(tmp_path)
+    next((tmp_path / "protokolle_P").glob("*_ground_truth_*.txt")).unlink()
+    a = AirPodsAdapter()
+    with pytest.raises(FileNotFoundError, match="no ground truth for P1"):
+        a.load(a.discover(tmp_path)[0])
+
+
+def test_protocol_files_without_a_timestamp_suffix_are_found(tmp_path):
+    # T3's files are named "T3_ground_truth.txt" and "T3_protokoll.txt".
+    write_fixture(tmp_path, pid="T3")
+    d = tmp_path / "protokolle_T"
+    next(d.glob("*_ground_truth_*.txt")).rename(d / "T3_ground_truth.txt")
+    next(d.glob("*_protokoll_*.txt")).rename(d / "T3_protokoll.txt")
+    a = AirPodsAdapter()
+    att = a.load(a.discover(tmp_path)[0]).tables["attention"]
+    assert att["activity"].iloc[0] == "Abschreiben eines Textes vom Laptop"
 
 
 def test_attention_table_holds_intervals_not_samples(tmp_path):
@@ -132,7 +189,7 @@ def test_activity_is_empty_string_when_no_protocol_file_exists(tmp_path):
 
 def test_protocol_boundary_mismatch_against_ground_truth_fails_loudly(tmp_path):
     write_fixture(tmp_path)
-    gt = tmp_path / "1_Data_Protocols+GroundTruth"
+    gt = tmp_path / "protokolle_P"
     proto = next(gt.glob("*_protokoll_*.txt"))
     # Shift the second block's start away from the ground truth's 4:00.
     proto.write_text(PROTOCOL.replace("2 |   4:00 |   9:30 |   5:30 | distracted",
@@ -144,7 +201,7 @@ def test_protocol_boundary_mismatch_against_ground_truth_fails_loudly(tmp_path):
 
 def test_protocol_label_mismatch_against_ground_truth_fails_loudly(tmp_path):
     write_fixture(tmp_path)
-    gt = tmp_path / "1_Data_Protocols+GroundTruth"
+    gt = tmp_path / "protokolle_P"
     proto = next(gt.glob("*_protokoll_*.txt"))
     proto.write_text(PROTOCOL.replace("1 |   0:00 |   4:00 |   4:00 | focused",
                                       "1 |   0:00 |   4:00 |   4:00 | distracted"))
@@ -157,7 +214,7 @@ def test_protocol_missing_a_labelled_run_fails_loudly(tmp_path):
     """Dropping a block whose label differs from its neighbour's removes a run,
     so the merge yields two entries against the ground truth's three."""
     write_fixture(tmp_path)
-    gt = tmp_path / "1_Data_Protocols+GroundTruth"
+    gt = tmp_path / "protokolle_P"
     proto = next(gt.glob("*_protokoll_*.txt"))
     lines = PROTOCOL.splitlines()
     proto.write_text("\n".join(lines[:2] + [lines[-1]]) + "\n")
@@ -167,14 +224,14 @@ def test_protocol_missing_a_labelled_run_fails_loudly(tmp_path):
 
 
 def test_adjacent_same_label_blocks_stay_separate_rows(tmp_path):
-    """The corpus shape: 22 of 26 ground-truth files hold FEWER intervals than
+    """The corpus shape: 32 of 38 ground-truth files hold FEWER intervals than
     their protocol holds blocks, because adjacent same-label blocks are merged
     there. The published table keeps the blocks, so each row carries exactly one
     activity; merging adjacent same-label rows reproduces the ground truth,
     which the reverse direction cannot do — it would lose the activities.
     """
     write_fixture(tmp_path)
-    proto = next((tmp_path / "1_Data_Protocols+GroundTruth").glob("*_protokoll_*.txt"))
+    proto = next((tmp_path / "protokolle_P").glob("*_protokoll_*.txt"))
     # Split GT's closing `focused` run into two blocks with distinct activities.
     proto.write_text(
         "  1 |   0:00 |   4:00 |   4:00 | focused     | Abschreiben eines Textes vom Laptop\n"
@@ -207,10 +264,9 @@ def test_activity_is_ascii_verbatim_not_translated(tmp_path):
 # --- I14: the observer timeline is checkable --------------------------------
 
 def test_protocol_tail_is_reported_not_enforced(tmp_path):
-    """The tail is a reported quantity, not a gate. Measured across the 25 real
-    recordings it runs -0.47 s to +44.55 s (18 within a second); the negatives
-    are sub-second stream ends, not late starts, and P14's +44.55 s is a real
-    recording that must not fail a strict build."""
+    """The tail is a reported quantity, not a gate. Measured across the 38 real
+    recordings it runs -14.66 s (P27) to +44.55 s (P14), 20 within a second;
+    none of them may fail a strict build."""
     write_fixture(tmp_path)
     a = AirPodsAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
@@ -224,12 +280,25 @@ def test_protocol_tail_is_reported_not_enforced(tmp_path):
 
 def test_gesamtdauer_mismatch_against_block_end_fails_loudly(tmp_path):
     write_fixture(tmp_path)
-    gt = tmp_path / "1_Data_Protocols+GroundTruth"
+    gt = tmp_path / "protokolle_P"
     proto = next(gt.glob("*_protokoll_*.txt"))
     proto.write_text(PROTOCOL.replace("Gesamtdauer: 10:00", "Gesamtdauer: 11:00"))
     a = AirPodsAdapter()
     with pytest.raises(ValueError, match="Gesamtdauer"):
         a.load(a.discover(tmp_path)[0])
+
+
+def test_a_stale_gesamtdauer_is_tolerated_for_t1_only(tmp_path):
+    # T1's header states 22:30 against a 15:00 block table; the data README
+    # names the table authoritative. Any other protocol must still agree.
+    for pid in ("T1", "T2"):
+        write_fixture(tmp_path / pid, pid=pid)
+        proto = next((tmp_path / pid / "protokolle_T").glob("*_protokoll_*.txt"))
+        proto.write_text(PROTOCOL.replace("Gesamtdauer: 10:00", "Gesamtdauer: 22:30"))
+    a = AirPodsAdapter()
+    assert "attention" in a.load(a.discover(tmp_path / "T1")[0]).tables
+    with pytest.raises(ValueError, match="Gesamtdauer"):
+        a.load(a.discover(tmp_path / "T2")[0])
 
 
 def test_attention_intervals_fall_inside_headimu_range(tmp_path):
@@ -252,7 +321,7 @@ def test_expansion_crosscheck_rejects_a_wrong_clock_anchor(tmp_path):
     # The interval offsets are relative to an unstated clock. Before the
     # per-sample column is dropped it is used to prove the anchor.
     write_fixture(tmp_path)
-    d = tmp_path / "1_Data_Protocols+GroundTruth"
+    d = tmp_path / "protokolle_P"
     next(d.glob("*_ground_truth_*.txt")).write_text(
         "0:00 distracted\n4:00 focused\n9:30 distracted\n")   # inverted
     # Why: the protocol has to be inverted with it. The two files are

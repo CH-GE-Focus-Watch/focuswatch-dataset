@@ -10,6 +10,7 @@ column itself is dropped once it has served as the crosscheck for that anchor.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -19,23 +20,48 @@ from .. import schema as S
 from ..time_axis import parse_iso_to_unix_ns, sort_stable_by_time
 from .base import RecordingBundle, RecordingRef, register
 
-# Why: this cohort's own participant ids (P1..P26) collide with ML4SCS's;
+# Why: this cohort's own participant ids (P1..P28) collide with ML4SCS's;
 # every id leaving this module is cohort-prefixed so the two never merge.
 COHORT = "AIRPODS"
 
-_RECORDING = re.compile(r"^(P\d+)_.*_labeled\.csv$")
+
+@dataclass(frozen=True)
+class _Subcohort:
+    csv_dir: str
+    csv_glob: str
+    protocol_dir: str
+    # Whether the CSV's per-sample `label` column is filled and can prove the
+    # ground-truth clock anchor (see `_verify_expansion`).
+    sample_labels: bool
+
+
+# The study export's layout: the development cohort P1..P28 with labelled
+# samples, the external test cohort T1..T10 with the label column left empty.
+_SUBCOHORTS = (
+    _Subcohort("daten/csv-dateien", "P*_labeled.csv", "protokolle_P", sample_labels=True),
+    _Subcohort("daten/T-CSVs", "T*_airpod_motion_*.csv", "protokolle_T", sample_labels=False),
+)
+_RECORDING = re.compile(r"^([PT]\d+)_\d+m\d{2}s_airpod_motion_.*\.csv$")
 _GT_LINE = re.compile(r"^\s*(\d+):(\d{2})\s+(\S+)\s*$")
-_GT_DIR = "1_Data_Protocols+GroundTruth"
 
 # Protocol block table beside each `*_ground_truth_*.txt`:
 # ("  1 |   0:00 |   3:00 |   3:00 | focused     | Abschreiben ...") -
-# idx | start mm:ss | end mm:ss | duration mm:ss | label | free-text activity.
+# idx | start mm:ss | end mm:ss | duration mm:ss | label | free-text activity,
+# plus an optional status column where a protocol was corrected afterwards.
 _PROTOCOL_ROW = re.compile(
-    r"^\s*\d+\s*\|\s*(\d+):(\d{2})\s*\|\s*(\d+):(\d{2})\s*\|\s*\d+:\d{2}\s*\|\s*(\S+)\s*\|\s*(.+?)\s*$"
+    r"^\s*\d+\s*\|\s*(\d+):(\d{2})\s*\|\s*(\d+):(\d{2})\s*\|\s*\d+:\d{2}\s*\|\s*(\S+)\s*"
+    r"\|\s*([^|]+?)\s*(?:\|\s*(.+?)\s*)?$"
 )
+# P20's corrected protocol keeps the blocks a sensor dropout cut off, marked
+# with this status; they never happened in the recording.
+_DROPPED_BLOCK = "ENTFALLEN"
 # "Gesamtdauer" is cross-checked when available but never required; the tail
 # calculation uses the final contiguous block's end.
 _GESAMTDAUER = re.compile(r"Gesamtdauer\D*(\d+):(\d{2})")
+# Why: T1's header states 22:30 while its block table ends at 15:00 and the
+# recording runs 15:05. The data README names the block table authoritative
+# for T1; every other protocol must still agree with its own header.
+_GESAMTDAUER_STALE = frozenset({"T1"})
 
 # Source states plain values (accel norm 0.0156 -> userAcceleration; gravity
 # norm 1.0000 -> already in g), so this is a rename, not a unit conversion.
@@ -66,12 +92,12 @@ def parse_protocol(text: str) -> list[tuple[float, float, str, str]]:
     Returns (start_s, end_s, label, activity) per block, file order. The
     German source text is umlaut-free ASCII already ("Loesen", "Uebergaenge")
     and is published verbatim - a translated label would no longer be the
-    observer's own record.
+    observer's own record. A block whose status is ENTFALLEN is skipped.
     """
     out = []
     for line in text.splitlines():
         m = _PROTOCOL_ROW.match(line)
-        if m:
+        if m and not (m.group(7) or "").startswith(_DROPPED_BLOCK):
             start = int(m.group(1)) * 60 + int(m.group(2))
             end = int(m.group(3)) * 60 + int(m.group(4))
             out.append((float(start), float(end), m.group(5), m.group(6)))
@@ -83,11 +109,12 @@ class AirPodsAdapter:
 
     def discover(self, root: Path) -> list[RecordingRef]:
         refs = []
-        for f in sorted(root.glob("*_labeled.csv")):
-            m = _RECORDING.match(f.name)
-            if m:
-                rid = f"{COHORT}-{m.group(1)}"
-                refs.append(RecordingRef(rid, rid, COHORT, self.name, f))
+        for sub in _SUBCOHORTS:
+            for f in sorted((root / sub.csv_dir).glob(sub.csv_glob)):
+                m = _RECORDING.match(f.name)
+                if m:
+                    rid = f"{COHORT}-{m.group(1)}"
+                    refs.append(RecordingRef(rid, rid, COHORT, self.name, f))
         return refs
 
     def load(self, ref: RecordingRef) -> RecordingBundle:
@@ -102,10 +129,8 @@ class AirPodsAdapter:
         head["src_sensor_timestamp_s"] = raw["sensor_timestamp_s"]
         head = sort_stable_by_time(head)
 
-        tables = {"headimu": head}
         attention, tail_s = self._attention(ref, t_ns, raw["label"])
-        if attention is not None:
-            tables["attention"] = attention
+        tables = {"headimu": head, "attention": attention}
 
         meta = {
             "head_model": S.HEAD_MODEL_AIRPODS_PRO_3,
@@ -160,15 +185,19 @@ class AirPodsAdapter:
         return RecordingBundle(ref, tables, meta)
 
     def _attention(self, ref: RecordingRef, t_ns: np.ndarray,
-                   source_labels: pd.Series) -> tuple[pd.DataFrame | None, float | None]:
+                   source_labels: pd.Series) -> tuple[pd.DataFrame, float | None]:
         pid = ref.recording_id.removeprefix(f"{COHORT}-")
-        gt_dir = ref.path.parent / _GT_DIR
-        matches = sorted(gt_dir.glob(f"{pid}_ground_truth_*.txt")) if gt_dir.exists() else []
+        sub = _subcohort(ref.path)
+        gt_dir = ref.path.parents[2] / sub.protocol_dir
+        # Why: T3's files carry no timestamp suffix ("T3_ground_truth.txt").
+        # A recording without its ground truth would silently publish no
+        # attention table, so a missing or empty one fails instead.
+        matches = sorted(gt_dir.glob(f"{pid}_ground_truth*.txt"))
         if not matches:
-            return None, None
+            raise FileNotFoundError(f"{gt_dir}: no ground truth for {pid}")
         intervals = parse_ground_truth(matches[0].read_text())
         if not intervals:
-            return None, None
+            raise ValueError(f"{matches[0]}: no `M:SS label` line")
         rows, tail_s = self._resolve_blocks(gt_dir, pid, intervals, t_ns)
 
         t0, t_end = int(t_ns.min()), int(t_ns.max())
@@ -195,7 +224,10 @@ class AirPodsAdapter:
                 f"t_end_ns={row.t_end_ns}) - the head-IMU stream ends before its "
                 "own ground truth; this recording is shorter than its protocol"
             )
-        self._verify_expansion(table, t_ns, source_labels)
+        # Why: T ships no per-sample labels, so its anchor rests on the data
+        # README ("relative to the FIRST sensor sample") alone.
+        if sub.sample_labels:
+            self._verify_expansion(table, t_ns, source_labels)
         return table, tail_s
 
     @staticmethod
@@ -204,7 +236,7 @@ class AirPodsAdapter:
         """Build attention rows at protocol-block granularity.
 
         The observer's `*_ground_truth_*.txt` is the sibling `*_protokoll_*.txt`
-        with adjacent same-label blocks merged - verified across all 26 pairs in
+        with adjacent same-label blocks merged - verified across all 38 pairs in
         the corpus (boundaries a subset, labels identical, merge reproduces the
         file exactly). Publishing the blocks is therefore lossless in the
         direction that matters: merging adjacent same-label rows reproduces the
@@ -217,14 +249,14 @@ class AirPodsAdapter:
         exists either way, since a column that appears only sometimes within one
         modality must retain its canonical column set.
 
-        The tail is reported, never enforced. Measured across the 25
-        recordings it runs -0.47 s to +44.55 s, 18 of them within a second: the
-        negatives are sub-second, the stream ending a fraction before the
-        protocol's nominal end rather than starting late. P14's +44.55 s is a
-        real recording and must not fail a strict build.
+        The tail is reported, never enforced. Measured across the 38
+        recordings it runs -14.66 s (P27) to +44.55 s (P14), 20 of them within
+        a second. P27, T1 and T10 stop several seconds before their protocol's
+        nominal end, P14 runs long; all are real recordings and must not fail a
+        strict build.
         """
         plain = [(s, lab, "") for s, lab in intervals]
-        matches = sorted(gt_dir.glob(f"{pid}_protokoll_*.txt")) if gt_dir.exists() else []
+        matches = sorted(gt_dir.glob(f"{pid}_protokoll*.txt"))
         if not matches:
             return plain, None
         path = matches[0]
@@ -247,7 +279,7 @@ class AirPodsAdapter:
 
         protocol_total_s = blocks[-1][1]   # blocks are contiguous - last end = declared total
         m = _GESAMTDAUER.search(text)
-        if m:
+        if m and pid not in _GESAMTDAUER_STALE:
             stated_s = int(m.group(1)) * 60 + int(m.group(2))
             if abs(stated_s - protocol_total_s) > 1.0:
                 raise ValueError(
@@ -279,6 +311,10 @@ class AirPodsAdapter:
                 f"interval expansion matches only {agreement:.3f} of the source labels; "
                 "the ground-truth clock anchor is wrong"
             )
+
+
+def _subcohort(csv_path: Path) -> _Subcohort:
+    return next(s for s in _SUBCOHORTS if Path(s.csv_dir).name == csv_path.parent.name)
 
 
 register(AirPodsAdapter())
