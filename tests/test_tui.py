@@ -30,6 +30,8 @@ def build_manifest(root):
             "has_attention": False,
             "has_gravity": True,
             "watch_model": "Apple Watch Series 6",
+            "pen_model": "Moleskine Smart Pen NWP-F130",
+            "head_model": "",
         },
         {
             "recording_id": "B",
@@ -43,6 +45,8 @@ def build_manifest(root):
             "has_attention": True,
             "has_gravity": False,
             "watch_model": "Apple Watch SE (2nd generation)",
+            "pen_model": "",
+            "head_model": "AirPods Pro 3",
         },
         {
             "recording_id": "C",
@@ -56,6 +60,8 @@ def build_manifest(root):
             "has_attention": False,
             "has_gravity": False,
             "watch_model": "",
+            "pen_model": "LAMY safari all black ncode NWP-F80",
+            "head_model": "",
         },
     ]).to_parquet(root / "sessions.parquet", index=False)
     return root
@@ -222,6 +228,20 @@ def test_watch_model_facets_count_each_model(tmp_path):
         async with app.run_test():
             assert facet_count(app, "watch_series_6") == "1"
             assert facet_count(app, "watch_se_2") == "1"
+
+    asyncio.run(scenario())
+
+
+def test_pen_and_head_model_facets_count_each_model(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test():
+            assert facet_count(app, "pen_nwp_f130") == "1"
+            assert facet_count(app, "pen_nwp_f80") == "1"
+            assert facet_count(app, "pen_nwp_f50") == "0"
+            assert facet_count(app, "head_airpods_pro_3") == "1"
 
     asyncio.run(scenario())
 
