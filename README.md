@@ -23,9 +23,10 @@ rate, and time domain. Modality files use one uniform layout:
 
 Participant identifiers are source-scoped, not a defensible count of distinct
 people across cohorts. The eight Moleskine sessions are eight different people,
-as confirmed by the data collector, and use the pseudonyms `MOLESKINE-P01` to
-`MOLESKINE-P08` in chronological order; the raw filenames' informal labels are
-not published.
+as confirmed by the data collector. They are numbered in chronological order:
+recording `MOLESKINE-S01` belongs to participant `MOLESKINE-P01`, up to `S08`
+and `P08`. Neither the raw filenames' informal labels nor the recording dates
+are published.
 
 ## Install
 
@@ -54,14 +55,20 @@ uv run fw build \
   --source airpods=PATH/TO/Headphone_6Tasks_38People \
   --source moleskine=PATH/TO/raw_moleskine \
   --out out/focuswatch-dataset \
-  --redact all_xy
+  --redact all_xy \
+  --time-origin recording_start
 
 uv run fw validate --dataset out/focuswatch-dataset
 uv run fw report --dataset out/focuswatch-dataset
 ```
 
-`--redact` is required so a release cannot silently inherit a coordinate
-policy. Pen coordinates can reconstruct handwriting; `all_xy` is the safe
+`--redact` and `--time-origin` are required so a release cannot silently
+inherit a coordinate or timestamp policy. `--time-origin recording_start`
+subtracts each recording's earliest instant from every Unix clock value, so
+the bundle no longer says on which day and at what time someone was recorded.
+Differences between samples, modalities and clocks stay unchanged.
+`unix_epoch` keeps the source clocks for internal builds. Pen coordinates
+can reconstruct handwriting; `all_xy` is the safe
 public-release choice unless consent and disclosure review explicitly approve
 another policy. `--no-strict` is for diagnostics, not publication.
 
@@ -214,8 +221,9 @@ Before creating a public archive:
 
 1. Build from a clean reviewed commit so `build_git_sha` is not suffixed
    `-dirty`.
-2. Use an explicitly approved redaction policy and independently review pen,
-   marker, and participant metadata for disclosure risk.
+2. Use an explicitly approved redaction policy and `--time-origin
+   recording_start`, and independently review pen, marker, and participant
+   metadata for disclosure risk.
 3. Confirm consent and redistribution rights for every cohort and confirm that
    CC BY-NC 4.0 is authorised for the dataset.
 4. Run `uv run pytest` and `uv run fw validate --dataset ...`; require zero

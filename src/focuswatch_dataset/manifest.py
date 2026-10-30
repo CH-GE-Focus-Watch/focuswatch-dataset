@@ -15,6 +15,7 @@ import pandas as pd
 from . import schema as S
 from .adapters.base import RecordingBundle
 from .time_axis import median_rate_hz
+from .time_origin import TimeOrigin, recording_span
 from .validate import Dropout, detect_dropouts
 
 MANIFEST_COLUMNS = (
@@ -25,10 +26,10 @@ MANIFEST_COLUMNS = (
     "accel_semantics", "accel_calibration", "accel_still_bias", "gravity_source",
     "head_model",
     "head_hz_nominal", "head_hz_measured", "has_head_gravity", "has_head_quaternion", "has_head_gyro",
-    "time_domain", "time_alignment", "t_start_ns", "t_end_ns", "duration_s",
+    "time_domain", "time_alignment", "time_origin", "t_start_ns", "t_end_ns", "duration_s",
     "protocol_id", "study_mode", "subject_index", "n_writing_tasks", "n_idle_tasks",
     "watch_wrist_side", "handedness",
-    "pen_model", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
+    "pen_model", "pen_hz_measured", "pen_xy_unit", "pen_pressure_scale", "pen_delta_s", "pen_delta_sigma",
     "delta_applied", "alignment_note",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
     "source_pipeline", "schema_version", "redaction_policy", "build_git_sha",
@@ -37,7 +38,7 @@ MANIFEST_COLUMNS = (
 TABLE_DERIVED_MANIFEST_COLUMNS = (
     *S.MODALITY_FLAGS,
     *S.CAPABILITY_FLAG_COLUMNS,
-    "watch_hz_measured", "head_hz_measured",
+    "watch_hz_measured", "head_hz_measured", "pen_hz_measured",
     "t_start_ns", "t_end_ns", "duration_s",
     "n_writing_tasks", "n_idle_tasks",
     "n_samples_watch", "n_samples_pen", "n_samples_head", "issue_codes",
@@ -77,7 +78,7 @@ _INTERNAL_META_KEYS = frozenset({
 # from the meta merge alongside them, even though they are not gated by
 # check_coverage and so are not part of the shared flag/modality table.
 _STRUCTURAL_FLAGS = frozenset(S.CAPABILITY_FLAG_MODALITY)
-_DERIVED_MEASURED_FIELDS = frozenset({"watch_hz_measured", "head_hz_measured"})
+_DERIVED_MEASURED_FIELDS = frozenset({"watch_hz_measured", "head_hz_measured", "pen_hz_measured"})
 _DERIVED_TASK_COUNT_FIELDS = frozenset({"n_writing_tasks", "n_idle_tasks"})
 # Why: both are computed from meta["time_domain_by_modality"] (see
 # _primary_time_domain/_alignment_note below), not declared independently by
@@ -95,10 +96,11 @@ _DEFAULTS: dict[str, object] = {
     "watch_wrist_side": "unknown", "handedness": "unknown", "delta_applied": False,
     "pen_delta_s": np.nan, "pen_delta_sigma": np.nan, "alignment_note": "",
     "accel_still_bias": np.nan, "issue_codes": "", "redaction_policy": "none",
+    "time_origin": TimeOrigin.UNIX_EPOCH.value,
     "build_git_sha": "", "subject_index": -1, "study_mode": "",
     "watch_model": "", "pen_model": "", "head_model": "",
     "watch_hz_nominal": np.nan, "watch_hz_measured": np.nan,
-    "head_hz_nominal": np.nan, "head_hz_measured": np.nan,
+    "head_hz_nominal": np.nan, "head_hz_measured": np.nan, "pen_hz_measured": np.nan,
     "n_writing_tasks": None, "n_idle_tasks": None,
     "pen_xy_unit": "", "pen_pressure_scale": "",
     "accel_semantics": "", "accel_calibration": "", "gravity_source": "none",
@@ -108,27 +110,36 @@ _DEFAULTS: dict[str, object] = {
 }
 
 
-def _span(bundle: RecordingBundle) -> tuple[int, int]:
-    starts, ends = [], []
-    for df in bundle.tables.values():
-        if not len(df):
-            continue
-        # Why: interval tables carry start and end separately. Reading the end
-        # from t_start_ns would drop the final interval from the duration.
-        if {"t_start_ns", "t_end_ns"} <= set(df.columns):
-            starts.append(int(df["t_start_ns"].min()))
-            ends.append(int(df["t_end_ns"].max()))
-        elif S.TIME_COLUMN in df.columns:
-            starts.append(int(df[S.TIME_COLUMN].min()))
-            ends.append(int(df[S.TIME_COLUMN].max()))
-    return (min(starts), max(ends)) if starts else (0, 0)
-
-
 def _rate(df: pd.DataFrame | None) -> float:
     if df is None or S.TIME_COLUMN not in df.columns or not len(df):
         return np.nan
     hz = median_rate_hz(df[S.TIME_COLUMN].to_numpy(dtype=np.int64))
     return round(hz, 3) if np.isfinite(hz) else np.nan
+
+
+# The pen's own clock, in milliseconds. Present only where the source logs it.
+_PEN_DEVICE_CLOCK = "src_timestamp"
+
+
+def _pen_dot_rate(pen: pd.DataFrame | None) -> float:
+    """Dots per second while the pen touches the paper, on the pen's own clock.
+
+    A pen emits dots only during a stroke, so a median over the whole table
+    mixes in every pause. t_ns does not work either: the ZHAW backend stamps
+    dots on arrival, in Bluetooth batches that share one timestamp. The pen
+    clock has neither problem, so a table without it gets NaN, not a guess.
+    """
+    if pen is None or _PEN_DEVICE_CLOCK not in pen.columns or "dot_type" not in pen.columns:
+        return np.nan
+    dots = pen[pen[_PEN_DEVICE_CLOCK].notna()]
+    stroke = (dots["dot_type"] == "PEN_DOWN").cumsum()
+    clock = dots.groupby(stroke)[_PEN_DEVICE_CLOCK]
+    span_s = (clock.max() - clock.min()) / 1e3
+    intervals = clock.size() - 1
+    timed = span_s > 0
+    if not timed.any():
+        return np.nan
+    return round(float(intervals[timed].sum() / span_s[timed].sum()), 3)
 
 
 def _task_counts(markers: pd.DataFrame | None) -> tuple[int | None, int | None]:
@@ -222,7 +233,7 @@ def table_derived_manifest_values(
     b: RecordingBundle, dropouts: dict[str, Dropout] | None = None,
 ) -> dict[str, object]:
     """Manifest fields whose values are determined entirely by published tables."""
-    t0, t1 = _span(b)
+    t0, t1 = recording_span(b.tables)
     row: dict[str, object] = {
         "recording_id": b.ref.recording_id, "participant_id": b.ref.participant_id,
         "cohort": b.ref.cohort, "pipeline": b.ref.pipeline,
@@ -233,6 +244,7 @@ def table_derived_manifest_values(
         "n_samples_head": len(b.tables.get("headimu", [])),
         "watch_hz_measured": np.nan,
         "head_hz_measured": np.nan,
+        "pen_hz_measured": _pen_dot_rate(b.tables.get("pen")),
     }
     for modality in S.MODALITIES:
         row[f"has_{modality}"] = modality in b.tables
@@ -415,7 +427,9 @@ def table_column_descriptor_values(df: pd.DataFrame, column: str,
         "unit": unit,
         "semantics": semantics,
         "frame": frame,
-        "sample_rate_hz": _rate(df),
+        # Why: a pen table is an event stream, so it reports the in-stroke dot
+        # rate the manifest publishes, not a median over pauses and batches.
+        "sample_rate_hz": _pen_dot_rate(df) if "dot_type" in df.columns else _rate(df),
     }
 
 

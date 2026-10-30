@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import schema as S
+from .time_origin import TimeOrigin
 
 # Frictionless resource names are lowercase alphanumeric plus `.`, `-`, or `_`.
 _SLUG_INVALID = re.compile(r"[^a-z0-9._-]+")
@@ -85,6 +86,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
     n_participants = int(manifest["participant_id"].nunique())
     identifier_noun = "identifier" if n_participants == 1 else "identifiers"
     redaction_policy = str(manifest["redaction_policy"].iloc[0])
+    time_origin = str(manifest["time_origin"].iloc[0])
     has_overlap_only = bool(
         (manifest["time_alignment"] == S.TIME_ALIGNMENT_OVERLAP_ONLY).any()
     )
@@ -147,6 +149,9 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         "", "## Limitations", "",
         f"- This bundle's pen-coordinate redaction policy is `{redaction_policy}`; see "
         "`sessions.parquet` for the per-recording declaration.",
+        f"- This bundle's time origin is `{time_origin}`. Under `recording_start` every "
+        "timestamp counts from the start of its own recording, so the dates and times of "
+        "day of the sessions are not published; see the data dictionary.",
         "- Acceleration semantics vary by source. Filter on `accel_semantics` before "
         "combining recordings.",
         "- Pen coordinates and pressure are device-native, not millimetres or a "
@@ -204,10 +209,15 @@ _TIME_DOMAIN_OVERRIDE_VOCABULARY = (
 def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
     # channels.parquet declares time domains per recording, modality, and
     # column because canonical and provenance timestamps can use different clocks.
+    if str(manifest["time_origin"].iloc[0]) == TimeOrigin.RECORDING_START:
+        time_unit = ("timestamps as int64 nanoseconds since the start of the recording "
+                     "(`time_origin = \"recording_start\"`)")
+    else:
+        time_unit = "timestamps as int64 Unix nanoseconds"
     lines = ["# Data dictionary", "",
              "Units are canonical across the bundle: acceleration and gravity in g,",
              "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
-             "timestamps as int64 Unix nanoseconds. `time_domain` is named per",
+             f"{time_unit}. `time_domain` is named per",
              "(recording, modality, column) in this table, and it answers one question",
              "per kind of column: a TIME-VALUED column declares the clock ITS OWN VALUES",
              "are expressed in; every other column declares the clock ITS ROW is stamped",
@@ -242,6 +252,16 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         lines.append(f"| `{value}` | {meaning} |")
 
     lines += [
+        "", "## Time origin", "",
+        "`time_origin` in `sessions.parquet` states where the timestamps count from.",
+        "",
+        "| value | meaning |", "|---|---|",
+        "| `unix_epoch` | Every clock value is as the source logged it, in Unix time. |",
+        "| `recording_start` | The earliest instant of each recording was subtracted from every "
+        "Unix clock value of that recording: `t_ns`, `t_start_ns`, `t_end_ns`, the Unix "
+        "millisecond `src_` columns and the Unix millisecond marker payload fields. "
+        "Differences between samples, modalities and clocks are unchanged, and a "
+        "`src_` clock that ran off by days still shows that offset. |",
         "", "## Time alignment vocabulary", "",
         "| value | meaning |", "|---|---|",
         "| `shared_clock` | Modalities use the same capture or backend clock. |",
@@ -259,7 +279,16 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         "them. Some recordings do not contain pen tilt or a pen-device timestamp; missing "
         "values are represented as `NaN`, not inferred. Coordinate scales can also change "
         "within a recording, so inspect or segment the trace before using positional "
-        "statistics.", ""]
+        "statistics.", "",
+        "## Pen sampling rate", "",
+        "A pen reports dots only while it touches the paper, so it has no fixed sample "
+        "rate. `pen_hz_measured` in `sessions.parquet`, and `sample_rate_hz` on the pen "
+        "rows of `channels.parquet`, give the dots per second within strokes, measured on "
+        "the pen's own clock (`src_timestamp`). Recordings without a pen-device timestamp "
+        "have `NaN` there: their `t_ns` is the backend's arrival time, which comes in "
+        "Bluetooth batches and would misstate the rate. Dots are also dropped during "
+        "fast strokes, so the rate is an average, not the camera frame rate. There is no "
+        "nominal pen rate: the manufacturer specifications we found do not state one.", ""]
 
     summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))

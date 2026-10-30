@@ -57,5 +57,5 @@ def test_example_selects_one_watch_rate_before_loading(synthetic_bundle):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "MOLESKINE-20240822T121207869Z" in result.stdout
+    assert "MOLESKINE-S01" in result.stdout
     assert "ZHAW-EGE-T6" not in result.stdout

@@ -16,6 +16,7 @@ from .redact import (
     payload_has_coordinates,
 )
 from .time_axis import median_rate_hz
+from .time_origin import TimeOrigin, epoch_columns
 from .write import read_table, table_metadata
 
 
@@ -245,9 +246,23 @@ def validate_recording(recording_id: str, tables: dict[str, pd.DataFrame],
 
     spans = {m: s for m, s in ((m, _table_span(df)) for m, df in tables.items()) if s}
 
+    rebased = meta.get("time_origin") == TimeOrigin.RECORDING_START
     for modality, (lo, _hi) in spans.items():
-        add("time_magnitude", modality, lo,
-            "timestamps on the declared wall clock", _EPOCH_NS_MIN <= lo <= _EPOCH_NS_MAX)
+        if rebased:
+            add("time_magnitude", modality, lo,
+                "timestamps relative to the recording start", 0 <= lo < _EPOCH_NS_MIN)
+        else:
+            add("time_magnitude", modality, lo,
+                "timestamps on the declared wall clock", _EPOCH_NS_MIN <= lo <= _EPOCH_NS_MAX)
+    # Why: every table and payload field, not only the known clock columns -
+    # a source column nobody listed in time_origin.MS_COLUMNS would otherwise
+    # publish the recording date unnoticed.
+    if rebased:
+        for modality, df in tables.items():
+            leftover = epoch_columns(df)
+            add("no_unix_timestamps", modality, ", ".join(leftover) or "none",
+                "no column holds a Unix timestamp under time_origin 'recording_start'",
+                not leftover)
 
     # A declared dropout (schema.DROPOUT_COVERAGE_RATIO_MIN) is exempt
     # from the overlap requirement - a sensor that disconnected 2 s into an
@@ -621,6 +636,19 @@ def _archive_redaction_policy(manifest: pd.DataFrame) -> RedactionPolicy:
     return next(iter(policies))
 
 
+def _archive_time_origin(manifest: pd.DataFrame) -> TimeOrigin:
+    observed = set(manifest["time_origin"].tolist())
+    unknown = sorted(repr(v) for v in observed if v not in {o.value for o in TimeOrigin})
+    if unknown:
+        raise ValueError("sessions.parquet: unknown time_origin value(s): " + ", ".join(unknown))
+    if len(observed) != 1:
+        raise ValueError(
+            "sessions.parquet: time_origin must be consistent across archive rows; "
+            f"found {sorted(observed)}"
+        )
+    return TimeOrigin(observed.pop())
+
+
 def _has_stored_coordinates(pen: pd.DataFrame, rows=None) -> bool:
     columns = [column for column in XY_COLUMNS if column in pen.columns]
     if not columns:
@@ -709,6 +737,7 @@ def validate_dataset(root: Path | str) -> ValidationReport:
     if duplicate_ids:
         raise ValueError(f"sessions.parquet: duplicate recording_id values: {', '.join(duplicate_ids)}")
     redaction_policy = _archive_redaction_policy(manifest)
+    _archive_time_origin(manifest)
 
     report = ValidationReport()
     for problem in check_manifest_consistency(manifest, root):

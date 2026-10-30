@@ -12,6 +12,7 @@ from focuswatch_dataset.cli import main
 from focuswatch_dataset.load import load_manifest
 from focuswatch_dataset.manifest import check_manifest_consistency
 from focuswatch_dataset.redact import RedactionPolicy
+from focuswatch_dataset.time_origin import TimeOrigin, epoch_columns
 from focuswatch_dataset.validate import validate_dataset
 from focuswatch_dataset.write import read_table, write_table
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
@@ -221,7 +222,7 @@ def test_redaction_policy_is_recorded_in_the_manifest(tmp_path):
 def test_cli_build_and_validate(tmp_path):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out), "--redact", "none"]
+    args = ["build", "--out", str(out), "--redact", "none", "--time-origin", "unix_epoch"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
@@ -246,7 +247,7 @@ def test_cli_build_requires_an_explicit_redaction_policy(tmp_path):
 def test_cli_build_reports_invalid_source_arguments_without_a_traceback(
     tmp_path, capsys, sources, message,
 ):
-    args = ["build", "--out", str(tmp_path / "out"), "--redact", "none"]
+    args = ["build", "--out", str(tmp_path / "out"), "--redact", "none", "--time-origin", "unix_epoch"]
     for source in sources:
         args += ["--source", source]
     assert main(args) == 1
@@ -337,6 +338,46 @@ def test_cli_validate_rejects_a_restored_marker_payload_coordinate(tmp_path):
     write_table(markers, path, path.stem)
 
     assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_build_with_recording_start_publishes_no_unix_timestamp(tmp_path):
+    """Every table of every source starts at 0 and the archive still validates."""
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out, time_origin=TimeOrigin.RECORDING_START)
+    manifest = load_manifest(out)
+
+    assert set(manifest["time_origin"]) == {"recording_start"}
+    assert (manifest["t_start_ns"] == 0).all()
+    for path in out.glob("*/*.parquet"):
+        assert epoch_columns(read_table(path)) == [], path
+    assert validate_dataset(out).failed == []
+    assert "nanoseconds since the start of the recording" in (out / "data_dictionary.md").read_text()
+    assert "time origin is `recording_start`" in (out / "README.md").read_text()
+
+
+def test_cli_validate_rejects_a_restored_unix_timestamp(tmp_path):
+    """A clock column put back on Unix time breaks the archive's declared origin."""
+    out = tmp_path / "out"
+    root = tmp_path / "src" / "ml4scs"
+    write_ml4scs(root)
+    build_dataset({"ml4scs": root}, out, time_origin=TimeOrigin.RECORDING_START)
+    path = next((out / "watch").glob("*.parquet"))
+    watch = read_table(path)
+    watch["src_server_received_ms"] = watch["src_server_received_ms"] + 1_778_855_597_578
+    write_table(watch, path, path.stem)
+
+    assert main(["validate", "--dataset", str(out)]) == 1
+
+
+def test_validate_archive_requires_one_consistent_time_origin(tmp_path):
+    out = tmp_path / "out"
+    build_dataset(sources(tmp_path), out, time_origin=TimeOrigin.RECORDING_START)
+    manifest = load_manifest(out)
+    manifest.loc[manifest.index[0], "time_origin"] = TimeOrigin.UNIX_EPOCH.value
+    manifest.to_parquet(out / "sessions.parquet", index=False)
+
+    with pytest.raises(ValueError, match="time_origin.*consistent"):
+        validate_dataset(out)
 
 
 def test_cli_validate_rejects_a_table_with_the_wrong_embedded_recording_id(tmp_path):
@@ -730,7 +771,7 @@ def test_cli_build_reports_out_as_a_file_without_a_traceback(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
     out.write_text("occupied")
-    args = ["build", "--out", str(out), "--redact", "none"]
+    args = ["build", "--out", str(out), "--redact", "none", "--time-origin", "unix_epoch"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 1
@@ -939,7 +980,7 @@ def test_git_sha_omits_the_dirty_suffix_on_a_clean_tree(monkeypatch):
 def test_cli_report(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out), "--redact", "none"]
+    args = ["build", "--out", str(out), "--redact", "none", "--time-origin", "unix_epoch"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
@@ -990,7 +1031,7 @@ def test_cli_build_prints_a_message_and_returns_1_on_failure(tmp_path, capsys):
 
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out), "--redact", "none"]
+    args = ["build", "--out", str(out), "--redact", "none", "--time-origin", "unix_epoch"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
 
@@ -1019,7 +1060,7 @@ def test_cli_report_on_a_missing_bundle_prints_a_message_not_a_traceback(tmp_pat
 def test_cli_validate_ignores_a_corrupt_historical_report(tmp_path, capsys):
     src = sources(tmp_path)
     out = tmp_path / "out"
-    args = ["build", "--out", str(out), "--redact", "none"]
+    args = ["build", "--out", str(out), "--redact", "none", "--time-origin", "unix_epoch"]
     for name, path in src.items():
         args += ["--source", f"{name}={path}"]
     assert main(args) == 0
