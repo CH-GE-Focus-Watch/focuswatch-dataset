@@ -55,6 +55,12 @@ FACETS: dict[str, Facet] = {
     "watch_100_hz": Facet(
         "Watch nominal rate 100 Hz", "Acquisition", ("watch_hz_nominal", 100.0)
     ),
+    "watch_series_6": Facet(
+        "Apple Watch Series 6", "Acquisition", ("watch_model", S.WATCH_MODEL_SERIES_6)
+    ),
+    "watch_se_2": Facet(
+        "Apple Watch SE (2nd gen.)", "Acquisition", ("watch_model", S.WATCH_MODEL_SE_2)
+    ),
     "acceleration_user": Facet(
         "Acceleration without gravity", "Acquisition", ("accel_semantics", "user")
     ),
@@ -193,6 +199,8 @@ _FACET_MODALITIES: dict[str, tuple[str, ...]] = {
     "watch_gyro": ("watch",),
     "watch_50_hz": ("watch",),
     "watch_100_hz": ("watch",),
+    "watch_series_6": ("watch",),
+    "watch_se_2": ("watch",),
     "acceleration_user": ("watch",),
     "acceleration_total": ("watch",),
     "watch_raw_acceleration": ("watch_rawaccel",),
@@ -300,6 +308,10 @@ def _subset_manifest(
     for flag, modality in S.CAPABILITY_FLAG_MODALITY.items():
         if flag in subset and modality not in modalities:
             subset[flag] = False
+    # Why: the published manifest never names a model for a recording without
+    # a watch table, so a subset that drops the watch must not either.
+    if "watch_model" in subset and "watch" not in modalities:
+        subset["watch_model"] = ""
     return subset
 
 

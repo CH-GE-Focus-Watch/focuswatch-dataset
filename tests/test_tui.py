@@ -29,6 +29,7 @@ def build_manifest(root):
             "has_pen": True,
             "has_attention": False,
             "has_gravity": True,
+            "watch_model": "Apple Watch Series 6",
         },
         {
             "recording_id": "B",
@@ -41,6 +42,7 @@ def build_manifest(root):
             "has_pen": False,
             "has_attention": True,
             "has_gravity": False,
+            "watch_model": "Apple Watch SE (2nd generation)",
         },
         {
             "recording_id": "C",
@@ -53,6 +55,7 @@ def build_manifest(root):
             "has_pen": True,
             "has_attention": False,
             "has_gravity": False,
+            "watch_model": "",
         },
     ]).to_parquet(root / "sessions.parquet", index=False)
     return root
@@ -207,6 +210,18 @@ def test_facets_show_how_many_recordings_each_would_leave(tmp_path):
             await pilot.click("#facet-smartwatch")
             await pilot.pause()
             assert facet_count(app, "digital_pen") == "1"
+
+    asyncio.run(scenario())
+
+
+def test_watch_model_facets_count_each_model(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection")
+        async with app.run_test():
+            assert facet_count(app, "watch_series_6") == "1"
+            assert facet_count(app, "watch_se_2") == "1"
 
     asyncio.run(scenario())
 

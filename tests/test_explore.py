@@ -7,6 +7,7 @@ import pytest
 
 import focuswatch_dataset as fw
 from focuswatch_dataset import cli
+from focuswatch_dataset import schema as S
 from focuswatch_dataset.explore import (
     FACETS,
     ExplorerSelection,
@@ -322,6 +323,40 @@ def test_facets_on_different_columns_still_narrow(cohort_manifest):
     assert selection_query(selection) == (
         "cohort in ['ML4SCS', 'ZHAW'] and time_alignment == 'shared_clock'"
     )
+
+
+def test_watch_model_facets_select_by_hardware():
+    manifest = pd.DataFrame({
+        "recording_id": ["M1", "Z1", "A1"],
+        "watch_model": [S.WATCH_MODEL_SERIES_6, S.WATCH_MODEL_SE_2, ""],
+    })
+
+    assert filter_manifest(manifest, {"watch_series_6": True})["recording_id"].tolist() == ["M1"]
+    assert filter_manifest(manifest, {"watch_se_2": True})["recording_id"].tolist() == ["Z1"]
+    assert selection_query({"watch_series_6": True, "watch_se_2": True}) == (
+        f"watch_model in {list(S.WATCH_MODELS)!r}"
+    )
+
+
+def test_exporting_without_the_watch_clears_its_model(tmp_path):
+    root = tmp_path / "bundle"
+    root.mkdir()
+    manifest = pd.DataFrame([{
+        "recording_id": "Z", "has_watch": True, "has_headimu": True, "has_pen": False,
+        "has_markers": False, "has_attention": False, "watch_model": S.WATCH_MODEL_SE_2,
+    }])
+    manifest.to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame([{"recording_id": "Z", "modality": "headimu", "column": "accel_user_x"}]).to_parquet(
+        root / "channels.parquet", index=False)
+    for modality in ("watch", "headimu"):
+        (root / modality).mkdir()
+        (root / modality / "Z.parquet").write_bytes(modality.encode())
+
+    out = export_selected_recordings(root, manifest, {"head_imu": True}, tmp_path / "head-only")
+
+    exported = pd.read_parquet(out / "sessions.parquet").iloc[0]
+    assert not bool(exported["has_watch"])
+    assert exported["watch_model"] == ""
 
 
 def test_missing_column_names_every_facet_that_needs_it():
