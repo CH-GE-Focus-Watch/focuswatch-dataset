@@ -294,6 +294,13 @@ def test_discover_fails_loudly_without_a_participant_id(tmp_path):
         SensorLoggerAdapter().discover(tmp_path)
 
 
+def test_watch_model_is_se_2(tmp_path):
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SE_2
+
+
 # --- C5: allow-listed payload, promoted handedness -------------------------
 
 def test_handedness_reaches_the_manifest(tmp_path):

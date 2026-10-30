@@ -100,6 +100,13 @@ def test_loaded_watch_passes_the_validator(tmp_path):
     assert failed == []
 
 
+def test_watch_model_is_series_6(tmp_path):
+    write_fixture(tmp_path)
+    a = Ml4scsAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SERIES_6
+
+
 def test_legacy_recording_has_no_gravity_columns(tmp_path):
     write_fixture(tmp_path, sid="S008", fs=50.0, gravity=False)
     a = Ml4scsAdapter()

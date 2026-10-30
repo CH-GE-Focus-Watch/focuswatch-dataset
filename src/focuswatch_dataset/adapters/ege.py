@@ -67,6 +67,7 @@ class EgeAdapter:
             tables["markers"] = sort_stable_by_time(combined)
 
         meta = {
+            "watch_model": S.WATCH_MODEL_SE_2,
             # Why: this source states no nominal wrist rate anywhere (no rate
             # column in imu_samples_rows.csv or sensor_session.csv); declaring
             # one anyway would fabricate a fact the source doesn't carry. The

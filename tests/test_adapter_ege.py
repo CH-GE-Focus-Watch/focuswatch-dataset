@@ -116,6 +116,13 @@ def test_acceleration_is_declared_total(tmp_path):
     assert bundle.meta["accel_calibration"] == "raw_uncalibrated"
 
 
+def test_watch_model_is_se_2(tmp_path):
+    write_fixture(tmp_path)
+    a = EgeAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SE_2
+
+
 def test_quaternion_columns_pass_through_already_scalar_last(tmp_path):
     write_fixture(tmp_path)
     a = EgeAdapter()

@@ -143,6 +143,7 @@ class SensorLoggerAdapter:
             tables["markers"] = markers
 
         meta = {
+            "watch_model": S.WATCH_MODEL_SE_2,
             "watch_hz_nominal": _watch_hz_nominal(metadata),
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "measured",

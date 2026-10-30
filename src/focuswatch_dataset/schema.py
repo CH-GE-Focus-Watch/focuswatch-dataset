@@ -109,6 +109,13 @@ MARKER_PAYLOAD_ALLOWED_KEYS = frozenset({
 # Typed handedness vocabulary; unknown payload text must not reach the manifest.
 HANDEDNESS_VALUES = ("left", "right", "unknown")
 
+# Why: the hardware is a cohort fact the source files do not record - the
+# SensorLogger metadata names only the paired iPhone. ML4SCS wore a Series 6,
+# every other watch cohort an SE (2nd generation), as stated by the study team.
+WATCH_MODEL_SERIES_6 = "Apple Watch Series 6"
+WATCH_MODEL_SE_2 = "Apple Watch SE (2nd generation)"
+WATCH_MODELS = (WATCH_MODEL_SERIES_6, WATCH_MODEL_SE_2)
+
 # Provenance columns may use a clock other than their table's canonical t_ns
 # axis. These shared values are applied through time_domain_by_column.
 TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"
