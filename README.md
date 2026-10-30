@@ -7,12 +7,12 @@ different sensors, clocks, or acceleration semantics are interchangeable.
 
 ## Dataset scope
 
-The current release candidate contains 75 recordings across four cohorts.
+The current release candidate contains 88 recordings across four cohorts.
 
 | Cohort | Recordings | Primary modalities |
 | --- | ---: | --- |
 | ML4SCS | 33 | wrist IMU, Moleskine pen, task markers |
-| AIRPODS | 25 | head IMU, observer attention intervals |
+| AIRPODS | 38 | head IMU, observer attention intervals |
 | ZHAW | 9 | wrist/head IMU, selected pen and marker streams |
 | MOLESKINE | 8 | watch accelerometer and Moleskine pen |
 
