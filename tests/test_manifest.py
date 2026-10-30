@@ -475,3 +475,41 @@ def test_nominal_hz_none_survives_the_dataframe_round_trip():
     rate = next(f for f in findings if f.check == "sample_rate")
     assert rate.passed
     assert "no nominal rate declared" in rate.expected
+
+
+def _pen_with_device_clock():
+    # Two strokes of 4 dots each, 12.5 ms apart on the pen clock (80 Hz). The
+    # backend stamps each stroke as one Bluetooth batch, and the 5 s pause
+    # between strokes must not count.
+    return pd.DataFrame({
+        "t_ns": np.repeat([1_000_000_000, 6_000_000_000], 4).astype(np.int64),
+        "dot_type": ["PEN_DOWN", "PEN_MOVE", "PEN_MOVE", "PEN_UP"] * 2,
+        "src_timestamp": [0.0, 12.5, 25.0, 37.5, 5000.0, 5012.5, 5025.0, 5037.5],
+    })
+
+
+def test_pen_rate_is_the_in_stroke_dot_rate_on_the_pen_clock():
+    b = bundle()
+    b.tables["pen"] = _pen_with_device_clock()
+    m = build_manifest([b]).iloc[0]
+    channels = build_channels([b])
+
+    assert m["pen_hz_measured"] == pytest.approx(80.0)
+    pen_rates = channels.loc[channels["modality"] == "pen", "sample_rate_hz"]
+    assert pen_rates.eq(m["pen_hz_measured"]).all()
+
+
+def test_pen_rate_is_nan_without_the_pen_clock():
+    """Backend arrival times are batched, so they must not stand in for the pen clock."""
+    b = bundle()
+    b.tables["pen"] = _pen_with_device_clock().drop(columns="src_timestamp")
+    m = build_manifest([b]).iloc[0]
+
+    assert np.isnan(m["pen_hz_measured"])
+    assert build_channels([b]).query("modality == 'pen'")["sample_rate_hz"].isna().all()
+
+
+def test_pen_rate_is_derived_not_copied():
+    b = bundle(pen_hz_measured=999.0)
+    b.tables["pen"] = _pen_with_device_clock()
+    assert build_manifest([b]).iloc[0]["pen_hz_measured"] == pytest.approx(80.0)

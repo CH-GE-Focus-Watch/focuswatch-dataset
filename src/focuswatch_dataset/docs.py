@@ -259,7 +259,16 @@ def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFr
         "them. Some recordings do not contain pen tilt or a pen-device timestamp; missing "
         "values are represented as `NaN`, not inferred. Coordinate scales can also change "
         "within a recording, so inspect or segment the trace before using positional "
-        "statistics.", ""]
+        "statistics.", "",
+        "## Pen sampling rate", "",
+        "A pen reports dots only while it touches the paper, so it has no fixed sample "
+        "rate. `pen_hz_measured` in `sessions.parquet`, and `sample_rate_hz` on the pen "
+        "rows of `channels.parquet`, give the dots per second within strokes, measured on "
+        "the pen's own clock (`src_timestamp`). Recordings without a pen-device timestamp "
+        "have `NaN` there: their `t_ns` is the backend's arrival time, which comes in "
+        "Bluetooth batches and would misstate the rate. Dots are also dropped during "
+        "fast strokes, so the rate is an average, not the camera frame rate. There is no "
+        "nominal pen rate: the manufacturer specifications we found do not state one.", ""]
 
     summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
                .size().reset_index(name="recordings"))
