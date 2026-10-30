@@ -7,7 +7,9 @@ import pytest
 from focuswatch_dataset import schema as S
 from focuswatch_dataset.adapters.base import RecordingBundle, RecordingRef
 from focuswatch_dataset.manifest import build_manifest
-from focuswatch_dataset.redact import RedactionPolicy, apply_redaction, redact_bundle
+from focuswatch_dataset.redact import (
+    RedactionPolicy, apply_redaction, payload_has_coordinates, redact_bundle,
+)
 
 
 def pen():
@@ -172,3 +174,19 @@ def test_no_redaction_keeps_marker_payload_coordinates():
     bundle = _bundle_with_payloads('{"x": 1.5, "y": 2.0, "force": 3}')
     out = redact_bundle(bundle, RedactionPolicy.NONE)
     assert out.tables["markers"]["src_payload"].tolist() == ['{"x": 1.5, "y": 2.0, "force": 3}']
+
+
+def test_redaction_removes_nested_payload_coordinates():
+    """An allow-listed key can hold an object; coordinates inside it are removed too."""
+    bundle = _bundle_with_payloads('{"ground_truth": {"x": 1, "label": "a"}, "tip": [{"y": 2}]}')
+    out = redact_bundle(bundle, RedactionPolicy.ALL_XY)
+    assert out.tables["markers"]["src_payload"].tolist() == [
+        '{"ground_truth": {"label": "a"}, "tip": [{}]}'
+    ]
+    assert not payload_has_coordinates(out.tables["markers"]["src_payload"].iloc[0])
+    assert payload_has_coordinates('{"tip": [{"y": 2}]}')
+
+
+def test_redaction_rejects_a_payload_that_is_not_a_json_object():
+    with pytest.raises(ValueError, match="not a JSON object"):
+        redact_bundle(_bundle_with_payloads('[{"x": 1}]'), RedactionPolicy.ALL_XY)

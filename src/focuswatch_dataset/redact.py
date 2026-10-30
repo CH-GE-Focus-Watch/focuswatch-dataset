@@ -70,15 +70,39 @@ def apply_redaction(pen: pd.DataFrame, markers: pd.DataFrame | None,
     return out
 
 
+def _payload_fields(payload: str) -> dict:
+    fields = json.loads(payload)
+    if not isinstance(fields, dict):
+        raise ValueError(f"marker payload is not a JSON object: {payload[:60]!r}")
+    return fields
+
+
+# Why: recursive, because an allow-listed key (ground_truth, tip, ...) may hold
+# an object, and a coordinate one level down is still a coordinate.
+def _has_coordinates(value) -> bool:
+    if isinstance(value, dict):
+        return any(k in XY_COLUMNS or _has_coordinates(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_coordinates(v) for v in value)
+    return False
+
+
+def _without_coordinates(value):
+    if isinstance(value, dict):
+        return {k: _without_coordinates(v) for k, v in value.items() if k not in XY_COLUMNS}
+    if isinstance(value, list):
+        return [_without_coordinates(v) for v in value]
+    return value
+
+
 def payload_has_coordinates(payload: str) -> bool:
-    return bool(payload) and any(key in json.loads(payload) for key in XY_COLUMNS)
+    return bool(payload) and _has_coordinates(_payload_fields(payload))
 
 
 def _payload_without_coordinates(payload: str) -> str:
     if not payload_has_coordinates(payload):
         return payload
-    fields = json.loads(payload)
-    return json.dumps({k: v for k, v in fields.items() if k not in XY_COLUMNS})
+    return json.dumps(_without_coordinates(_payload_fields(payload)))
 
 
 def strip_payload_coordinates(markers: pd.DataFrame) -> pd.DataFrame:
