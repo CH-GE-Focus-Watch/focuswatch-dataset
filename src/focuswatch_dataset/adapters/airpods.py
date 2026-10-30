@@ -33,13 +33,19 @@ class _Subcohort:
     # Whether the CSV's per-sample `label` column is filled and can prove the
     # ground-truth clock anchor (see `_verify_expansion`).
     sample_labels: bool
+    protocol_id: str
 
 
 # The study export's layout: the development cohort P1..P28 with labelled
 # samples, the external test cohort T1..T10 with the label column left empty.
+# The two ran different protocols: P with individually varied block lengths
+# (17.5-25.75 min), T with fixed 2-minute blocks (12 min; only T1, the first
+# test run, still used varied ones).
 _SUBCOHORTS = (
-    _Subcohort("daten/csv-dateien", "P*_labeled.csv", "protokolle_P", sample_labels=True),
-    _Subcohort("daten/T-CSVs", "T*_airpod_motion_*.csv", "protokolle_T", sample_labels=False),
+    _Subcohort("daten/csv-dateien", "P*_labeled.csv", "protokolle_P",
+               sample_labels=True, protocol_id="airpods_p"),
+    _Subcohort("daten/T-CSVs", "T*_airpod_motion_*.csv", "protokolle_T",
+               sample_labels=False, protocol_id="airpods_t"),
 )
 _RECORDING = re.compile(r"^([PT]\d+)_\d+m\d{2}s_airpod_motion_.*\.csv$")
 _GT_LINE = re.compile(r"^\s*(\d+):(\d{2})\s+(\S+)\s*$")
@@ -167,7 +173,7 @@ class AirPodsAdapter:
                 ("headimu", "src_sensor_timestamp_s"): S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK,
             },
             "time_alignment": "shared_clock",
-            "protocol_id": "airpods_attention",
+            "protocol_id": _subcohort(ref.path).protocol_id,
             "study_mode": "study",
             # Why: no source file records an independent session-start marker
             # for this export (the filename date/time is export time, not a
