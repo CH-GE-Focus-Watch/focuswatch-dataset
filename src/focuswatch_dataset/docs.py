@@ -17,19 +17,22 @@ def _slugify(name: str) -> str:
     return _SLUG_INVALID.sub("-", name.lower())
 
 
-# Package metadata and the bundled license file must name the same license.
-_DATA_LICENSE_TEXT = """\
+# Package metadata, README and the bundled license file must name the same license.
+_DATA_LICENSE = "CC BY-NC 4.0"
+_DATA_LICENSE_SPDX = "CC-BY-NC-4.0"
+_DATA_LICENSE_URL = "https://creativecommons.org/licenses/by-nc/4.0/"
+_DATA_LICENSE_TEXT = f"""\
 FocusWatch dataset - data license
 
 The data files in this bundle (everything except this LICENSE file and the
 generated documentation) are licensed under the Creative Commons
-Attribution 4.0 International License (CC BY 4.0).
+Attribution-NonCommercial 4.0 International License ({_DATA_LICENSE}).
 
-You are free to share and adapt this material for any purpose, even
-commercially, as long as you give appropriate credit, provide a link to the
-license, and indicate if changes were made.
+You are free to share and adapt this material, as long as you give
+appropriate credit, provide a link to the license, and indicate if changes
+were made. You may not use the material for commercial purposes.
 
-Full license text: https://creativecommons.org/licenses/by/4.0/legalcode
+Full license text: {_DATA_LICENSE_URL}legalcode
 
 This license covers the DATA only. The focuswatch-dataset software that
 produced this bundle is separately licensed (Apache-2.0); see that
@@ -58,7 +61,7 @@ def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame)
     (out / "datapackage.json").write_text(json.dumps({
         "profile": "data-package", "name": "focuswatch-dataset",
         "title": "FocusWatch: wrist and head IMU with pen and observer ground truth",
-        "licenses": [{"name": "CC-BY-4.0", "path": "https://creativecommons.org/licenses/by/4.0/"}],
+        "licenses": [{"name": _DATA_LICENSE_SPDX, "path": _DATA_LICENSE_URL}],
         "version": S.SCHEMA_VERSION, "resources": resources,
     }, indent=2))
 
@@ -113,7 +116,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         "| `validation_report.json` | - | every physical/structural check this build ran, and "
         "whether it passed |",
         "| `datapackage.json` | - | machine-readable Frictionless Data Package descriptor |",
-        "| `LICENSE` | - | the data license (CC BY 4.0) |",
+        f"| `LICENSE` | - | the data license ({_DATA_LICENSE}) |",
     ]
     for modality in S.MODALITIES:
         if counts[modality]:
@@ -161,7 +164,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         ]
     lines += [
         "", "## License", "",
-        "The data in this bundle is CC BY 4.0 - see `LICENSE`. The `focuswatch-dataset` software "
+        f"The data in this bundle is {_DATA_LICENSE} - see `LICENSE`. The `focuswatch-dataset` software "
         "that produced it is Apache-2.0, in its own source repository.",
         "", "## Corpus by cohort", "",
         "| cohort | recordings |",

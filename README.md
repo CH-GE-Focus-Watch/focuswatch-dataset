@@ -216,7 +216,7 @@ Before creating a public archive:
 2. Use an explicitly approved redaction policy and independently review pen,
    marker, and participant metadata for disclosure risk.
 3. Confirm consent and redistribution rights for every cohort and confirm that
-   CC BY 4.0 is authorised for the dataset.
+   CC BY-NC 4.0 is authorised for the dataset.
 4. Run `uv run pytest` and `uv run fw validate --dataset ...`; require zero
    failed checks.
 5. Inspect `sessions.parquet`, `validation_report.json`, and the generated
@@ -232,5 +232,5 @@ Before creating a public archive:
 ## License and citation
 
 The software is Apache-2.0; see [`LICENSE`](LICENSE). A generated dataset bundle
-declares CC BY 4.0 separately. `CITATION.cff` describes the software and still
+declares CC BY-NC 4.0 separately. `CITATION.cff` describes the software and still
 contains explicit placeholders that must be completed before release.

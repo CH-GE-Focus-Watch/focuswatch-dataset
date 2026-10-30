@@ -112,6 +112,16 @@ def test_discover_finds_the_development_and_the_test_cohort(tmp_path):
     assert ids == ["AIRPODS-P3", "AIRPODS-T4"]
 
 
+def test_protocol_id_separates_the_development_and_the_test_protocol(tmp_path):
+    # P ran individually varied block lengths (17.5-25.75 min), T fixed
+    # 2-minute blocks (12 min) - two protocols, not one.
+    write_fixture(tmp_path, pid="P3")
+    write_fixture(tmp_path, pid="T4")
+    a = AirPodsAdapter()
+    ids = {r.recording_id: a.load(r).meta["protocol_id"] for r in a.discover(tmp_path)}
+    assert ids == {"AIRPODS-P3": "airpods_p", "AIRPODS-T4": "airpods_t"}
+
+
 def test_test_cohort_loads_without_per_sample_labels(tmp_path):
     # T ships an empty label column, so there is no expansion to cross-check.
     write_fixture(tmp_path, pid="T2")

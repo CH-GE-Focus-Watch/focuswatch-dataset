@@ -57,7 +57,7 @@ def _head_bundle(rid="AIRPODS-P99", has_head_gyro_meta=True, n=200):
             "accel_semantics": "user", "accel_calibration": "fused",
             "gravity_source": "none",
             "time_domain_by_modality": {"headimu": "device_wall_clock"},
-            "time_alignment": "shared_clock", "protocol_id": "airpods_attention",
+            "time_alignment": "shared_clock", "protocol_id": "airpods_p",
             "head_model": S.HEAD_MODEL_AIRPODS_PRO_3,
         },
     )
@@ -336,7 +336,7 @@ def test_head_measured_rate_is_derived_not_copied():
         {"head_hz_nominal": None, "head_hz_measured": 999.0,  # deliberately wrong
          "accel_semantics": "user", "accel_calibration": "fused", "gravity_source": "none",
          "time_domain": "device_wall_clock", "time_alignment": "shared_clock",
-         "protocol_id": "airpods_attention", "head_model": S.HEAD_MODEL_AIRPODS_PRO_3},
+         "protocol_id": "airpods_p", "head_model": S.HEAD_MODEL_AIRPODS_PRO_3},
     )
     m = build_manifest([b]).iloc[0]
     assert m["head_hz_measured"] == pytest.approx(25.0)
