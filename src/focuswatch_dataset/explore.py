@@ -61,6 +61,18 @@ FACETS: dict[str, Facet] = {
     "watch_se_2": Facet(
         "Apple Watch SE (2nd gen.)", "Acquisition", ("watch_model", S.WATCH_MODEL_SE_2)
     ),
+    "pen_nwp_f130": Facet(
+        "Moleskine NWP-F130 pen", "Acquisition", ("pen_model", S.PEN_MODEL_NWP_F130)
+    ),
+    "pen_nwp_f50": Facet(
+        "Neo smartpen M1 NWP-F50 pen", "Acquisition", ("pen_model", S.PEN_MODEL_NWP_F50)
+    ),
+    "pen_nwp_f80": Facet(
+        "LAMY safari NWP-F80 pen", "Acquisition", ("pen_model", S.PEN_MODEL_NWP_F80)
+    ),
+    "head_airpods_pro_3": Facet(
+        "AirPods Pro 3", "Acquisition", ("head_model", S.HEAD_MODEL_AIRPODS_PRO_3)
+    ),
     "acceleration_user": Facet(
         "Acceleration without gravity", "Acquisition", ("accel_semantics", "user")
     ),
@@ -238,6 +250,10 @@ _FACET_MODALITIES: dict[str, tuple[str, ...]] = {
     "watch_100_hz": ("watch",),
     "watch_series_6": ("watch",),
     "watch_se_2": ("watch",),
+    "pen_nwp_f130": ("pen", "markers", "watch"),
+    "pen_nwp_f50": ("pen", "markers", "watch"),
+    "pen_nwp_f80": ("pen", "markers", "watch"),
+    "head_airpods_pro_3": ("headimu",),
     "acceleration_user": ("watch",),
     "acceleration_total": ("watch",),
     "watch_raw_acceleration": ("watch_rawaccel",),
@@ -346,9 +362,10 @@ def _subset_manifest(
         if flag in subset and modality not in modalities:
             subset[flag] = False
     # Why: the published manifest never names a model for a recording without
-    # a watch table, so a subset that drops the watch must not either.
-    if "watch_model" in subset and "watch" not in modalities:
-        subset["watch_model"] = ""
+    # the matching table, so a subset that drops that table must not either.
+    for column, (modality, _vocabulary) in S.DEVICE_MODEL_COLUMNS.items():
+        if column in subset and modality not in modalities:
+            subset[column] = ""
     return subset
 
 

@@ -108,6 +108,7 @@ class AirPodsAdapter:
             tables["attention"] = attention
 
         meta = {
+            "head_model": S.HEAD_MODEL_AIRPODS_PRO_3,
             "accel_semantics": "user",
             "accel_calibration": "fused",
             "gravity_source": "none",

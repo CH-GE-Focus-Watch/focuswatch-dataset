@@ -116,6 +116,35 @@ WATCH_MODEL_SERIES_6 = "Apple Watch Series 6"
 WATCH_MODEL_SE_2 = "Apple Watch SE (2nd generation)"
 WATCH_MODELS = (WATCH_MODEL_SERIES_6, WATCH_MODEL_SE_2)
 
+# A pen model the source does not record: a ZHAW session whose pen connected
+# only after `session_start`, so the web app never logged its name.
+DEVICE_MODEL_UNKNOWN = "unknown"
+# MOLESKINE: the Moleskine app's `pens` table names this model. ML4SCS logged
+# through its own BLE client, which records no device name; the model comes
+# from the study documentation, and both cohorts wrote on Ncode notebook 746.
+PEN_MODEL_NWP_F130 = "Moleskine Smart Pen NWP-F130"
+# ZHAW: the web app logs only the pen's Bluetooth name in `session_start`, so
+# each recording is mapped by that name, never by its folder - E3_session1 sits
+# with the M1 sessions but logged the LAMY. The M1's model number is the study
+# team's; the LAMY's is LAMY's own product listing.
+PEN_MODEL_NWP_F50 = "Neo smartpen M1 NWP-F50"
+PEN_MODEL_NWP_F80 = "LAMY safari all black ncode NWP-F80"
+ZHAW_PEN_MODEL_BY_NAME = {"Neosmartpen_M1": PEN_MODEL_NWP_F50, "LAMY_safari": PEN_MODEL_NWP_F80}
+PEN_MODELS = (PEN_MODEL_NWP_F130, PEN_MODEL_NWP_F50, PEN_MODEL_NWP_F80, DEVICE_MODEL_UNKNOWN)
+# AIRPODS and ZHAW: no export names the headphones; the study team confirmed
+# AirPods Pro 3 for both. Head tracking alone would not tell - the standard
+# AirPods (3rd generation) stream headphone motion too.
+HEAD_MODEL_AIRPODS_PRO_3 = "AirPods Pro 3"
+HEAD_MODELS = (HEAD_MODEL_AIRPODS_PRO_3,)
+
+# Manifest device-model column -> (table it describes, closed vocabulary). A
+# recording names a model exactly when it has that table.
+DEVICE_MODEL_COLUMNS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "watch_model": ("watch", WATCH_MODELS),
+    "pen_model": ("pen", PEN_MODELS),
+    "head_model": ("headimu", HEAD_MODELS),
+}
+
 # Provenance columns may use a clock other than their table's canonical t_ns
 # axis. These shared values are applied through time_domain_by_column.
 TIME_DOMAIN_PEN_DEVICE_CLOCK = "pen_device_clock"

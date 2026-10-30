@@ -18,7 +18,7 @@ T0_NS = 1780853585220_000_000
 
 def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pen=True,
                   with_rawaccel=True, generation="B", participant_id="E2", handedness="right",
-                  head_rows=200):
+                  head_rows=200, pen_name="Neosmartpen_M1"):
     d = root / sid
     d.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(2)
@@ -81,6 +81,8 @@ def write_fixture(root, sid="E2_session6", n=400, standardisation=False, with_pe
     start_payload = {"participant_id": participant_id}
     if handedness is not None:
         start_payload["handedness"] = handedness
+    # The real E2 payload logs `"pen_name": null`, so None stays an explicit null.
+    start_payload["pen_name"] = pen_name
     events = [{"t_ms": int(t[0] // 1_000_000), "t_session_ms": 0.0, "event": "session_start",
                "session_id": "x", "payload": start_payload},
               {"t_ms": int(t[10] // 1_000_000), "t_session_ms": 100.0, "event": "pen_session_sync",
@@ -299,6 +301,44 @@ def test_watch_model_is_se_2(tmp_path):
     a = SensorLoggerAdapter()
     bundle = a.load(a.discover(tmp_path)[0])
     assert build_manifest([bundle]).iloc[0]["watch_model"] == S.WATCH_MODEL_SE_2
+
+
+def test_pen_model_is_mapped_from_the_logged_pen_name_and_head_model_is_airpods_pro_3(tmp_path):
+    write_fixture(tmp_path)
+    a = SensorLoggerAdapter()
+    row = build_manifest([a.load(a.discover(tmp_path)[0])]).iloc[0]
+    assert row["pen_model"] == S.PEN_MODEL_NWP_F50
+    assert row["head_model"] == S.HEAD_MODEL_AIRPODS_PRO_3
+
+
+def test_a_session_logging_the_lamy_gets_the_lamy_whatever_its_folder(tmp_path):
+    # E3_session1 sits among the M1 sessions but logged the LAMY.
+    write_fixture(tmp_path, pen_name="LAMY_safari")
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["pen_model"] == S.PEN_MODEL_NWP_F80
+
+
+def test_pen_model_is_unknown_when_the_payload_logs_null(tmp_path):
+    write_fixture(tmp_path, pen_name=None)
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["pen_model"] == S.DEVICE_MODEL_UNKNOWN
+
+
+def test_unrecognised_pen_name_fails_loudly(tmp_path):
+    write_fixture(tmp_path, pen_name="Some_Other_Pen")
+    a = SensorLoggerAdapter()
+    with pytest.raises(ValueError, match="pen_name"):
+        a.load(a.discover(tmp_path)[0])
+
+
+def test_no_head_model_without_a_headphone_stream(tmp_path):
+    write_fixture(tmp_path)
+    (tmp_path / "E2_session6" / "Headphone.csv").unlink()
+    a = SensorLoggerAdapter()
+    bundle = a.load(a.discover(tmp_path)[0])
+    assert build_manifest([bundle]).iloc[0]["head_model"] == ""
 
 
 # --- C5: allow-listed payload, promoted handedness -------------------------

@@ -77,6 +77,7 @@ class MoleskineAdapter:
         )
         meta = {
             "watch_model": S.WATCH_MODEL_SE_2,
+            "pen_model": S.PEN_MODEL_NWP_F130,
             "watch_hz_nominal": 50.0,
             "accel_semantics": "total",
             "accel_calibration": "raw",

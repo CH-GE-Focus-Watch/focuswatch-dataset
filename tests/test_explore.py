@@ -338,6 +338,46 @@ def test_watch_model_facets_select_by_hardware():
     )
 
 
+def test_pen_and_head_model_facets_select_by_hardware():
+    manifest = pd.DataFrame({
+        "recording_id": ["M1", "Z1", "Z2", "A1"],
+        "pen_model": [S.PEN_MODEL_NWP_F130, S.PEN_MODEL_NWP_F80, S.PEN_MODEL_NWP_F50, ""],
+        "head_model": ["", S.HEAD_MODEL_AIRPODS_PRO_3, S.HEAD_MODEL_AIRPODS_PRO_3,
+                       S.HEAD_MODEL_AIRPODS_PRO_3],
+    })
+
+    def ids(selection):
+        return filter_manifest(manifest, selection)["recording_id"].tolist()
+
+    assert ids({"pen_nwp_f130": True}) == ["M1"]
+    assert ids({"pen_nwp_f80": True}) == ["Z1"]
+    assert ids({"pen_nwp_f80": True, "pen_nwp_f50": True}) == ["Z1", "Z2"]
+    assert ids({"head_airpods_pro_3": True}) == ["Z1", "Z2", "A1"]
+
+
+def test_exporting_without_the_pen_or_head_clears_their_models(tmp_path):
+    root = tmp_path / "bundle"
+    root.mkdir()
+    manifest = pd.DataFrame([{
+        "recording_id": "Z", "has_watch": True, "has_headimu": True, "has_pen": True,
+        "has_markers": False, "has_attention": False, "watch_model": S.WATCH_MODEL_SE_2,
+        "pen_model": S.PEN_MODEL_NWP_F80, "head_model": S.HEAD_MODEL_AIRPODS_PRO_3,
+    }])
+    manifest.to_parquet(root / "sessions.parquet", index=False)
+    pd.DataFrame([{"recording_id": "Z", "modality": "watch", "column": "accel_user_x"}]).to_parquet(
+        root / "channels.parquet", index=False)
+    for modality in ("watch", "headimu", "pen"):
+        (root / modality).mkdir()
+        (root / modality / "Z.parquet").write_bytes(modality.encode())
+
+    out = export_selected_recordings(root, manifest, {"smartwatch": True}, tmp_path / "watch-only")
+
+    exported = pd.read_parquet(out / "sessions.parquet").iloc[0]
+    assert exported["watch_model"] == S.WATCH_MODEL_SE_2
+    assert exported["pen_model"] == ""
+    assert exported["head_model"] == ""
+
+
 def test_exporting_without_the_watch_clears_its_model(tmp_path):
     root = tmp_path / "bundle"
     root.mkdir()
