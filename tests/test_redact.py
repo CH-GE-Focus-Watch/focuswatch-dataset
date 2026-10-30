@@ -146,3 +146,29 @@ def test_redact_bundle_without_a_pen_table_still_records_the_policy():
     out = redact_bundle(b, RedactionPolicy.ALL_XY)
     assert "pen" not in out.tables
     assert out.meta["redaction_policy"] == "all_xy"
+
+
+def _bundle_with_payloads(*payloads, with_pen=True):
+    marker_rows = markers().head(len(payloads)).assign(src_payload=list(payloads))
+    tables = {"markers": marker_rows}
+    if with_pen:
+        tables["pen"] = pen()
+    return RecordingBundle(
+        RecordingRef("COHORT-R1", "COHORT-P1", "COHORT", "pipeline", Path(".")),
+        tables, {"pen_model": S.PEN_MODEL_NWP_F130},
+    )
+
+
+@pytest.mark.parametrize("policy", [RedactionPolicy.FREE_WRITING_XY, RedactionPolicy.ALL_XY])
+@pytest.mark.parametrize("with_pen", [True, False])
+def test_redaction_removes_coordinates_from_marker_payloads(policy, with_pen):
+    """A marker payload is a second place a pen coordinate can be published."""
+    bundle = _bundle_with_payloads('{"x": 1.5, "y": 2.0, "force": 3}', "", with_pen=with_pen)
+    payloads = redact_bundle(bundle, policy).tables["markers"]["src_payload"].tolist()
+    assert payloads == ['{"force": 3}', ""]
+
+
+def test_no_redaction_keeps_marker_payload_coordinates():
+    bundle = _bundle_with_payloads('{"x": 1.5, "y": 2.0, "force": 3}')
+    out = redact_bundle(bundle, RedactionPolicy.NONE)
+    assert out.tables["markers"]["src_payload"].tolist() == ['{"x": 1.5, "y": 2.0, "force": 3}']

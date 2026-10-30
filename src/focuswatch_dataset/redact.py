@@ -5,6 +5,7 @@ and other behavioural signals. The bundle's manifest always records the policy.
 """
 from __future__ import annotations
 
+import json
 from enum import StrEnum
 
 import numpy as np
@@ -14,6 +15,7 @@ from . import schema as S
 from .adapters.base import RecordingBundle
 
 XY_COLUMNS = ("x", "y")
+PAYLOAD_COLUMN = "src_payload"
 FREE_WRITING_TASKS = frozenset({"free_writing", "think_pause_writing"})
 
 
@@ -68,6 +70,28 @@ def apply_redaction(pen: pd.DataFrame, markers: pd.DataFrame | None,
     return out
 
 
+def payload_has_coordinates(payload: str) -> bool:
+    return bool(payload) and any(key in json.loads(payload) for key in XY_COLUMNS)
+
+
+def _payload_without_coordinates(payload: str) -> str:
+    if not payload_has_coordinates(payload):
+        return payload
+    fields = json.loads(payload)
+    return json.dumps({k: v for k, v in fields.items() if k not in XY_COLUMNS})
+
+
+def strip_payload_coordinates(markers: pd.DataFrame) -> pd.DataFrame:
+    # Why: under every policy, not only within free-writing spans. No analysis
+    # needs a coordinate from a marker payload, and the pen table is where the
+    # policy's span logic applies.
+    if PAYLOAD_COLUMN not in markers.columns:
+        return markers
+    out = markers.copy()
+    out[PAYLOAD_COLUMN] = out[PAYLOAD_COLUMN].map(_payload_without_coordinates)
+    return out
+
+
 def _has_task_structure(markers: pd.DataFrame | None) -> bool:
     if markers is None or markers.empty or "task_id" not in markers.columns:
         return False
@@ -76,7 +100,7 @@ def _has_task_structure(markers: pd.DataFrame | None) -> bool:
 
 def redact_bundle(bundle: RecordingBundle,
                   policy: RedactionPolicy | str = RedactionPolicy.NONE) -> RecordingBundle:
-    """Apply `policy` to a bundle's pen table and record the choice in meta.
+    """Apply `policy` to a bundle's pen table and marker payloads, and record it in meta.
 
     Default parameter is NONE, not merely a documented convention - a caller
     that builds a bundle without deciding on a policy publishes unredacted
@@ -86,6 +110,8 @@ def redact_bundle(bundle: RecordingBundle,
     tables = dict(bundle.tables)
     if "pen" in tables:
         tables["pen"] = apply_redaction(tables["pen"], tables.get("markers"), policy)
+    if "markers" in tables and policy != RedactionPolicy.NONE:
+        tables["markers"] = strip_payload_coordinates(tables["markers"])
     meta = dict(bundle.meta)
     meta["redaction_policy"] = policy.value
     return RecordingBundle(bundle.ref, tables, meta)

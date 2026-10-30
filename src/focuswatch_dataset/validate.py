@@ -12,7 +12,8 @@ from . import schema as S
 from .adapters.base import RecordingBundle, RecordingRef
 from .physics import angle_deg, gravity_from_quaternion, norm_stats, still_mask
 from .redact import (
-    RedactionPolicy, XY_COLUMNS, _free_writing_spans, _has_task_structure,
+    PAYLOAD_COLUMN, RedactionPolicy, XY_COLUMNS, _free_writing_spans, _has_task_structure,
+    payload_has_coordinates,
 )
 from .time_axis import median_rate_hz
 from .write import read_table, table_metadata
@@ -629,11 +630,22 @@ def _has_stored_coordinates(pen: pd.DataFrame, rows=None) -> bool:
 
 
 def _validate_archive_redaction(bundle: RecordingBundle, policy: RedactionPolicy) -> None:
-    pen = bundle.tables.get("pen")
-    if pen is None or policy == RedactionPolicy.NONE:
+    if policy == RedactionPolicy.NONE:
         return
 
     recording_id = bundle.ref.recording_id
+    markers = bundle.tables.get("markers")
+    if markers is not None and PAYLOAD_COLUMN in markers.columns:
+        if markers[PAYLOAD_COLUMN].map(payload_has_coordinates).any():
+            raise ValueError(
+                f"markers/{recording_id}.parquet: {PAYLOAD_COLUMN} coordinates violate "
+                f"redaction_policy {policy.value!r}"
+            )
+
+    pen = bundle.tables.get("pen")
+    if pen is None:
+        return
+
     if policy == RedactionPolicy.ALL_XY:
         if _has_stored_coordinates(pen):
             raise ValueError(
@@ -642,7 +654,6 @@ def _validate_archive_redaction(bundle: RecordingBundle, policy: RedactionPolicy
             )
         return
 
-    markers = bundle.tables.get("markers")
     if not _has_task_structure(markers):
         if _has_stored_coordinates(pen):
             raise ValueError(
