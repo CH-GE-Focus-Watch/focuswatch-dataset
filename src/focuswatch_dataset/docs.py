@@ -102,8 +102,7 @@ def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> N
         # same people - the cohorts were run by different teams and no mapping
         # between them exists.
         "Identifiers are source-scoped, so this is not a count of established distinct "
-        "people: no complete mapping across cohorts or sources exists, and an identifier "
-        "ending in `-UNKNOWN` means the source has no publishable attribution.", "",
+        "people: no complete mapping across cohorts or sources exists.", "",
         "## Contents", "",
         "| file | rows | what it is |",
         "|---|---|---|",

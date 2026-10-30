@@ -29,6 +29,21 @@ _ACCEL = (
 )
 _DRAW_TYPES = {17: "PEN_DOWN", 18: "PEN_MOVE", 20: "PEN_UP"}
 
+# Each session is a different person, as confirmed by the data collector on
+# 2026-10-30; nothing in the source files records this.
+# Keyed by recording id rather than numbered on discovery, so an added or
+# missing file cannot shift everyone else's pseudonym.
+_PARTICIPANT_BY_RECORDING = {
+    "MOLESKINE-20240822T121207869Z": "MOLESKINE-P01",
+    "MOLESKINE-20240822T133828199Z": "MOLESKINE-P02",
+    "MOLESKINE-20240826T104309635Z": "MOLESKINE-P03",
+    "MOLESKINE-20240827T081907827Z": "MOLESKINE-P04",
+    "MOLESKINE-20240827T082807736Z": "MOLESKINE-P05",
+    "MOLESKINE-20240827T090441625Z": "MOLESKINE-P06",
+    "MOLESKINE-20240827T093950704Z": "MOLESKINE-P07",
+    "MOLESKINE-20240827T122921353Z": "MOLESKINE-P08",
+}
+
 
 def _database_path(watch_path: Path) -> Path:
     return watch_path.parent.parent / "moleskine" / "backup-db" / "note.db"
@@ -61,12 +76,13 @@ class MoleskineAdapter:
             if times.empty:
                 raise ValueError(f"{path}: watch CSV is empty")
             t_ns = int(parse_iso_to_unix_ns(times[_TIME]).min())
-            # Participant attribution is absent for five files and filenames
-            # contain informal labels for three others. Publishing those labels
-            # would leak source names and invent identity links, so every row is
-            # explicitly unattributed rather than guessed.
+            recording_id = _recording_id(t_ns)
+            # The filename labels are never used: three are informal names, so
+            # they would leak source names into public ids.
+            if recording_id not in _PARTICIPANT_BY_RECORDING:
+                raise ValueError(f"{path}: no participant assigned to {recording_id}")
             refs.append(RecordingRef(
-                _recording_id(t_ns), f"{COHORT}-UNKNOWN", COHORT, self.name, path,
+                recording_id, _PARTICIPANT_BY_RECORDING[recording_id], COHORT, self.name, path,
             ))
         return refs
 

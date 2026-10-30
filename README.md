@@ -22,9 +22,10 @@ rate, and time domain. Modality files use one uniform layout:
 `{modality}/{recording_id}.parquet`.
 
 Participant identifiers are source-scoped, not a defensible count of distinct
-people across cohorts. The Moleskine pilot has no complete publishable
-participant attribution and therefore uses `MOLESKINE-UNKNOWN`; the raw
-filenames' informal labels are not published.
+people across cohorts. The eight Moleskine sessions are eight different people,
+as confirmed by the data collector, and use the pseudonyms `MOLESKINE-P01` to
+`MOLESKINE-P08` in chronological order; the raw filenames' informal labels are
+not published.
 
 ## Install
 

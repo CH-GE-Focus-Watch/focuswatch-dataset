@@ -68,9 +68,22 @@ def test_discovery_uses_a_safe_utc_id_and_does_not_publish_source_names(tmp_path
     [ref] = MoleskineAdapter().discover(tmp_path)
 
     assert ref.recording_id == "MOLESKINE-20240822T121207869Z"
-    assert ref.participant_id == "MOLESKINE-UNKNOWN"
+    assert ref.participant_id == "MOLESKINE-P01"
     assert "Dani" not in ref.recording_id
     assert "Dani" not in ref.participant_id
+
+
+def test_discovery_rejects_a_session_without_an_assigned_participant(tmp_path):
+    write_fixture(tmp_path)
+    [csv] = (tmp_path / "sensorlog").glob("*.csv")
+    watch = pd.read_csv(csv)
+    watch["loggingTime(txt)"] = (
+        pd.to_datetime(watch["loggingTime(txt)"]) + pd.Timedelta(days=1)
+    ).astype(str)
+    watch.to_csv(csv, index=False)
+
+    with pytest.raises(ValueError, match="no participant assigned"):
+        MoleskineAdapter().discover(tmp_path)
 
 
 def test_watch_model_is_se_2(tmp_path):
