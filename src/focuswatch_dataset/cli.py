@@ -1,4 +1,4 @@
-"""Command line entry point: fw build | validate | report | explore."""
+"""Command line entry point: fw build | validate | report | preprocess | explore."""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +6,13 @@ from pathlib import Path
 
 from .build import build_dataset
 from .load import load_manifest
+from .preprocess import (
+    DEFAULT_CONTACT_TOLERANCE_S,
+    TASKS,
+    PreprocessConfig,
+    eligible_recordings,
+    write_preprocessed,
+)
 from .redact import RedactionPolicy
 from .validate import validate_dataset
 
@@ -44,6 +51,23 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("report")
     r.add_argument("--dataset", required=True)
 
+    pp = sub.add_parser("preprocess", help="derive per-sample training labels from a bundle")
+    pp.add_argument("--dataset", required=True)
+    pp.add_argument("--task", choices=sorted(TASKS), required=True)
+    pp.add_argument("--out", required=True, help="new directory, outside the bundle")
+    pp.add_argument("--gap-closing-s", type=float,
+                    help="writing: pauses up to this length between pen contacts count as "
+                         "writing; required for --task writing (the project uses 3.0)")
+    pp.add_argument("--pen-shift-s", type=float, default=0.0,
+                    help="writing: seconds added to pen timestamps before the join (default 0)")
+    pp.add_argument("--contact-tolerance-s", type=float, default=DEFAULT_CONTACT_TOLERANCE_S)
+    pp.add_argument("--target-hz", type=float, help="downsample the motion stream first")
+    pp.add_argument("--include-overlap-only", action="store_true",
+                    help="writing: also label recordings whose watch and pen clocks are "
+                         "independent (Moleskine); their labels are approximate")
+    pp.add_argument("--cohort", action="append", help="restrict to a cohort (repeatable)")
+    pp.add_argument("--recording", action="append", help="restrict to a recording id (repeatable)")
+
     e = sub.add_parser("explore")
     e.add_argument("root", metavar="DATASET_ROOT")
     e.add_argument(
@@ -69,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"{len(report.findings)} checks, {len(report.failed)} failed")
         return 1 if report.failed else 0
+
+    if args.command == "preprocess":
+        return _preprocess(args)
 
     if args.command == "explore":
         try:
@@ -118,4 +145,32 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(manifest)} recordings, "
           f"{n_identifiers} participant {identifier_noun}")
     print(manifest.groupby("cohort").size().to_string())
+    return 0
+
+
+def _preprocess(args: argparse.Namespace) -> int:
+    try:
+        config = PreprocessConfig(
+            task=args.task, gap_closing_s=args.gap_closing_s,
+            contact_tolerance_s=args.contact_tolerance_s, pen_shift_s=args.pen_shift_s,
+            target_hz=args.target_hz, include_overlap_only=args.include_overlap_only,
+        )
+        manifest = load_manifest(Path(args.dataset))
+        ids = eligible_recordings(manifest, config)
+        if args.cohort:
+            cohorts = manifest.set_index("recording_id")["cohort"]
+            ids = [rid for rid in ids if cohorts[rid] in args.cohort]
+        if args.recording:
+            unknown = sorted(set(args.recording) - set(ids))
+            if unknown:
+                raise ValueError(f"not eligible for the {args.task} task: {unknown}")
+            ids = [rid for rid in ids if rid in args.recording]
+        out = write_preprocessed(
+            Path(args.dataset), ids, config, Path(args.out),
+            on_progress=lambda n, total, rid: print(f"[{n}/{total}] {rid}", flush=True),
+        )
+    except (FileExistsError, KeyError, ValueError) as exc:
+        print(f"preprocess failed: {exc}")
+        return 1
+    print(f"{len(ids)} recordings labelled for {args.task} -> {out}")
     return 0
