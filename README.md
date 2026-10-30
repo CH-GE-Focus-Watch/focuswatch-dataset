@@ -50,7 +50,7 @@ uv run fw build \
   --source ml4scs=PATH/TO/ml4scs_partner_export \
   --source ege=PATH/TO/data_ege_pipeline \
   --source sensorlogger=PATH/TO/data_ege_sensorlogger_pipeline \
-  --source airpods=PATH/TO/labeled_data_AirPods_GS \
+  --source airpods=PATH/TO/Headphone_6Tasks_38People \
   --source moleskine=PATH/TO/raw_moleskine \
   --out out/focuswatch-dataset \
   --redact all_xy
