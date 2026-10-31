@@ -185,8 +185,15 @@ uv run fw preprocess --dataset PATH/TO/DATASET --task attention \
   `time_alignment = "overlap_only"` (Moleskine) are skipped for `writing`
   unless `--include-overlap-only` is given, because their watch and pen clocks
   are independent.
+- `writing` refuses a selection that mixes watch acceleration with gravity
+  (`accel_total_*`) and without it (`accel_user_*`), unless
+  `--allow-mixed-accel` is given. `preprocess.json` records each recording's
+  `accel_semantics` either way. In the current release, ZHAW-EGE-T6/T7 and
+  the Moleskine recordings are `total`; all other watch recordings are `user`.
 - `--target-hz 50` labels the downsampled timeline; `--cohort` and
   `--recording` restrict the selection.
+- `preprocess.json` names the source bundle by its directory name only, so a
+  shared label set does not reveal a local path.
 
 The same functions are available in Python:
 

@@ -191,6 +191,47 @@ def test_write_preprocessed_records_every_choice(bundle, tmp_path):
     assert 0 < record["recordings"][0]["labelled_share"] < 1
 
 
+def test_write_preprocessed_names_the_bundle_without_a_local_path(bundle, tmp_path):
+    out = write_preprocessed(bundle, ["ML4SCS-S096"], WRITING, tmp_path / "labelled")
+
+    record = json.loads((out / "preprocess.json").read_text())
+    assert record["source_bundle"] == bundle.name
+    assert str(bundle.parent) not in (out / "preprocess.json").read_text()
+
+
+def test_write_preprocessed_records_each_recordings_accel_semantics(bundle, tmp_path):
+    out = write_preprocessed(bundle, ["ML4SCS-S096", "ZHAW-SL-E2_session6"], WRITING,
+                             tmp_path / "labelled")
+
+    rows = json.loads((out / "preprocess.json").read_text())["recordings"]
+    assert {r["recording_id"]: r["accel_semantics"] for r in rows} == {
+        "ML4SCS-S096": "user", "ZHAW-SL-E2_session6": "user"}
+
+
+def test_mixed_accel_semantics_need_an_explicit_opt_in(bundle, tmp_path):
+    mixed = ["ML4SCS-S096", "ZHAW-EGE-T6"]
+    with pytest.raises(ValueError, match=r"mixed watch acceleration semantics \(total: 1, user: 1\)"):
+        write_preprocessed(bundle, mixed, WRITING, tmp_path / "refused")
+    with pytest.raises(ValueError, match="mixed watch acceleration semantics"):
+        preprocess_recordings(bundle, mixed, WRITING)
+    assert not (tmp_path / "refused").exists()
+
+    opted_in = PreprocessConfig(task="writing", gap_closing_s=3.0, allow_mixed_accel=True)
+    out = write_preprocessed(bundle, mixed, opted_in, tmp_path / "mixed")
+    record = json.loads((out / "preprocess.json").read_text())
+    assert record["config"]["allow_mixed_accel"] is True
+    assert {r["recording_id"]: r["accel_semantics"] for r in record["recordings"]} == {
+        "ML4SCS-S096": "user", "ZHAW-EGE-T6": "total"}
+
+
+def test_attention_records_no_watch_accel_semantics(bundle, tmp_path):
+    out = write_preprocessed(bundle, ["AIRPODS-P1"], PreprocessConfig(task="attention"),
+                             tmp_path / "attention")
+
+    row = json.loads((out / "preprocess.json").read_text())["recordings"][0]
+    assert "accel_semantics" not in row
+
+
 def test_write_preprocessed_refuses_existing_or_in_bundle_destinations(bundle, tmp_path):
     existing = tmp_path / "exists"
     existing.mkdir()
@@ -241,3 +282,15 @@ def test_cli_names_recordings_that_do_not_fit_the_task(bundle, tmp_path, capsys)
 
     assert code == 1
     assert "not eligible for the attention task: ['ML4SCS-S096']" in capsys.readouterr().out
+
+
+def test_cli_refuses_mixed_accel_unless_allowed(bundle, tmp_path, capsys):
+    from focuswatch_dataset import cli
+
+    base = ["preprocess", "--dataset", str(bundle), "--task", "writing", "--gap-closing-s", "3"]
+    code = cli.main([*base, "--out", str(tmp_path / "refused")])
+    assert code == 1
+    assert "mixed watch acceleration semantics" in capsys.readouterr().out
+
+    code = cli.main([*base, "--allow-mixed-accel", "--out", str(tmp_path / "mixed")])
+    assert code == 0, capsys.readouterr().out
