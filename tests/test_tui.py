@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("textual")
 
-from textual.widgets import Checkbox, Static, TabbedContent
+from textual.widgets import Checkbox, DataTable, Static, TabbedContent
 
 from focuswatch_dataset.tui import (
     DatasetExplorerApp,
@@ -181,6 +181,31 @@ def test_reset_clears_facets_and_preview_is_naturally_sorted(tmp_path):
             assert all(not box.value for box in app.query(Checkbox))
 
     asyncio.run(scenario())
+
+
+def test_preview_names_each_device_by_its_model(tmp_path):
+    root = build_manifest(tmp_path)
+
+    async def scenario():
+        app = DatasetExplorerApp(root, export_path=tmp_path / "selection.json")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            preview = table_text(app.query_one("#preview", DataTable))
+            assert "Watch S6 · Pen F130" in preview
+            assert "Watch SE2 · AirPods Pro 3 · Observer" in preview
+            assert "Pen F80" in preview
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("row, expected", [
+    ({"has_pen": True, "pen_model": "unknown"}, "Pen unknown"),
+    ({"has_pen": True, "pen_model": float("nan")}, "Pen unknown"),
+    ({"has_watch": True, "watch_model": "Apple Watch Ultra"}, "Apple Watch Ultra"),
+    ({"has_watch": False, "watch_model": "Apple Watch Series 6"}, "–"),
+])
+def test_device_names_never_hide_an_unknown_or_unlisted_model(row, expected):
+    assert DatasetExplorerApp._devices(pd.Series(row)) == expected
 
 
 def test_natural_sort_key_orders_numbered_ids_numerically():

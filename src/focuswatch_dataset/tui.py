@@ -30,6 +30,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from . import schema as S
 from .explore import (
     FACETS,
     PRESETS,
@@ -50,12 +51,29 @@ _PROVENANCE_COLUMNS = (
     "build_git_sha",
 )
 
-# Plain-language device labels shared by the breakdown line and the preview.
+# Plain-language modality labels for the breakdown line above the preview.
 _DEVICE_LABELS = (
-    ("has_watch", "Smartwatch", "W"),
-    ("has_headimu", "Head IMU", "H"),
-    ("has_pen", "Pen", "P"),
-    ("has_attention", "Annotation", "A"),
+    ("has_watch", "Smartwatch"),
+    ("has_headimu", "Head IMU"),
+    ("has_pen", "Pen"),
+    ("has_attention", "Annotation"),
+)
+
+# The preview names each device by a short model name. A model missing here
+# is shown by its full manifest name rather than hidden.
+_MODEL_SHORT_NAMES = {
+    S.WATCH_MODEL_SERIES_6: "Watch S6",
+    S.WATCH_MODEL_SE_2: "Watch SE2",
+    S.PEN_MODEL_NWP_F130: "Pen F130",
+    S.PEN_MODEL_NWP_F50: "Pen F50",
+    S.PEN_MODEL_NWP_F80: "Pen F80",
+    S.HEAD_MODEL_AIRPODS_PRO_3: "AirPods Pro 3",
+}
+# Modality flag, its model column, and the name shown when the model is unknown.
+_DEVICE_MODEL_COLUMNS = (
+    ("has_watch", "watch_model", "Watch unknown"),
+    ("has_pen", "pen_model", "Pen unknown"),
+    ("has_headimu", "head_model", "Head IMU unknown"),
 )
 
 # Which facet groups each assistant step shows, in registry order.
@@ -325,18 +343,28 @@ class DatasetExplorerApp(App[None]):
     def _breakdown_text(self) -> str:
         parts = [
             f"{label}: {int(self.selected[column].fillna(False).astype(bool).sum())}"
-            for column, label, _ in _DEVICE_LABELS
+            for column, label in _DEVICE_LABELS
             if column in self.selected
         ]
         return "  ·  ".join(parts) if parts else "No device flags in manifest"
 
     @staticmethod
     def _devices(row: pd.Series) -> str:
-        return " ".join(
-            short
-            for column, _, short in _DEVICE_LABELS
-            if column in row and bool(row[column])
-        ) or "–"
+        parts = []
+        for flag, column, unknown in _DEVICE_MODEL_COLUMNS:
+            if not (flag in row and bool(row[flag])):
+                continue
+            model = row.get(column)
+            model = "" if model is None or pd.isna(model) else str(model)
+            if model in ("", S.DEVICE_MODEL_UNKNOWN):
+                parts.append(unknown)
+            else:
+                parts.append(_MODEL_SHORT_NAMES.get(model, model))
+        # Why: observer annotation is no device, but it is the attention ground
+        # truth, so the preview keeps showing that a recording has it.
+        if "has_attention" in row and bool(row["has_attention"]):
+            parts.append("Observer")
+        return " · ".join(parts) or "–"
 
     @staticmethod
     def _rate(row: pd.Series) -> str:
