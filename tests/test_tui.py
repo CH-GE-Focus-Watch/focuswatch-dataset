@@ -192,7 +192,8 @@ def test_preview_names_each_device_by_its_model(tmp_path):
             await pilot.pause()
             preview = table_text(app.query_one("#preview", DataTable))
             assert "Watch S6 · Pen F130" in preview
-            assert "Watch SE2 · AirPods Pro 3 · Observer" in preview
+            assert "Watch SE2 · AirPods Pro 3" in preview
+            assert "Observer" not in preview
             assert "Pen F80" in preview
 
     asyncio.run(scenario())

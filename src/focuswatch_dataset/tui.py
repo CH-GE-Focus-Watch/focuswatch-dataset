@@ -360,10 +360,6 @@ class DatasetExplorerApp(App[None]):
                 parts.append(unknown)
             else:
                 parts.append(_MODEL_SHORT_NAMES.get(model, model))
-        # Why: observer annotation is no device, but it is the attention ground
-        # truth, so the preview keeps showing that a recording has it.
-        if "has_attention" in row and bool(row["has_attention"]):
-            parts.append("Observer")
         return " · ".join(parts) or "–"
 
     @staticmethod
