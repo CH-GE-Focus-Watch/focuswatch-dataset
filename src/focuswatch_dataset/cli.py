@@ -70,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     pp.add_argument("--include-overlap-only", action="store_true",
                     help="writing: also label recordings whose watch and pen clocks are "
                          "independent (Moleskine); their labels are approximate")
+    pp.add_argument("--allow-mixed-accel", action="store_true",
+                    help="writing: allow watch tables with and without gravity "
+                         "(accel_total_* / accel_user_*) in one label set")
     pp.add_argument("--cohort", action="append", help="restrict to a cohort (repeatable)")
     pp.add_argument("--recording", action="append", help="restrict to a recording id (repeatable)")
 
@@ -160,6 +163,7 @@ def _preprocess(args: argparse.Namespace) -> int:
             task=args.task, gap_closing_s=args.gap_closing_s,
             contact_tolerance_s=args.contact_tolerance_s, pen_shift_s=args.pen_shift_s,
             target_hz=args.target_hz, include_overlap_only=args.include_overlap_only,
+            allow_mixed_accel=args.allow_mixed_accel,
         )
         manifest = load_manifest(Path(args.dataset))
         ids = eligible_recordings(manifest, config)

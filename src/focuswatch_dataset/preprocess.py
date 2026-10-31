@@ -102,6 +102,7 @@ class PreprocessConfig:
     pen_shift_s: float = 0.0
     target_hz: float | None = None
     include_overlap_only: bool = False
+    allow_mixed_accel: bool = False
 
     def __post_init__(self) -> None:
         if self.task not in TASKS:
@@ -121,6 +122,33 @@ def _check_alignment(row: pd.Series, config: PreprocessConfig) -> None:
             f"{row['recording_id']}: watch and pen run on independent clocks "
             "(time_alignment = overlap_only), so contact labels are approximate; "
             "pass include_overlap_only=True to label it anyway"
+        )
+
+
+def _watch_accel_semantics(manifest: pd.DataFrame, recording_ids: list[str],
+                           config: PreprocessConfig) -> dict[str, str]:
+    """Each recording's watch `accel_semantics`; empty for a task on another stream.
+
+    Scoped to the watch like the guard in `load_recordings`: the manifest field
+    documents the watch stream, not the head IMU the attention task labels.
+    """
+    if TASKS[config.task][0] != "watch" or "accel_semantics" not in manifest:
+        return {}
+    by_id = manifest.set_index("recording_id")["accel_semantics"]
+    return {rid: str(by_id[rid]) for rid in dict.fromkeys(recording_ids)
+            if rid in by_id.index and pd.notna(by_id[rid]) and by_id[rid] != ""}
+
+
+def _check_accel_semantics(semantics: dict[str, str], config: PreprocessConfig) -> None:
+    groups: dict[str, list[str]] = {}
+    for rid, value in semantics.items():
+        groups.setdefault(value, []).append(rid)
+    if len(groups) > 1 and not config.allow_mixed_accel:
+        counts = ", ".join(f"{value}: {len(ids)}" for value, ids in sorted(groups.items()))
+        raise ValueError(
+            f"mixed watch acceleration semantics ({counts}): the labelled tables would "
+            "carry accel_total_* and accel_user_* columns side by side; restrict the "
+            "selection to one semantics or pass allow_mixed_accel=True"
         )
 
 
@@ -163,6 +191,8 @@ def preprocess_recordings(root: Path | str, recording_ids: list[str],
     """`preprocess_recording` for several ids, concatenated."""
     if not recording_ids:
         raise ValueError("recording_ids is empty; nothing to preprocess")
+    _check_accel_semantics(
+        _watch_accel_semantics(load_manifest(root), recording_ids, config), config)
     frames = [preprocess_recording(root, rid, config) for rid in recording_ids]
     return pd.concat(frames, ignore_index=True)
 
@@ -192,6 +222,8 @@ def write_preprocessed(root: Path | str, recording_ids: list[str], config: Prepr
     if not recording_ids:
         raise ValueError("recording_ids is empty; nothing to preprocess")
     manifest = load_manifest(root)
+    semantics = _watch_accel_semantics(manifest, recording_ids, config)
+    _check_accel_semantics(semantics, config)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}-", dir=output.parent))
     try:
@@ -205,11 +237,14 @@ def write_preprocessed(root: Path | str, recording_ids: list[str], config: Prepr
             label = table[TASKS[config.task][2]]
             share = (label == 1) if config.task == "writing" else label.notna()
             rows.append({"recording_id": rid, "n_samples": len(table),
-                         "labelled_share": round(float(share.mean()), 4)})
+                         "labelled_share": round(float(share.mean()), 4),
+                         **({"accel_semantics": semantics[rid]} if rid in semantics else {})})
         sha = manifest["build_git_sha"].iloc[0] if "build_git_sha" in manifest else None
         record = {
             "config": asdict(config),
-            "source_bundle": str(root.resolve()),
+            # Why: the directory name only. An absolute path would put the
+            # local user name into every label set that is shared.
+            "source_bundle": root.resolve().name,
             "source_build_git_sha": sha,
             "recordings": rows,
         }
