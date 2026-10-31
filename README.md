@@ -1,32 +1,176 @@
-# focuswatch-dataset
+# FocusWatch Dataset
 
-`focuswatch-dataset` converts heterogeneous wearable and annotation exports
-into one validated Parquet dataset for the FocusWatch / ML4SCS handwriting
-detection project. It standardises schemas and units without pretending that
-different sensors, clocks, or acceleration semantics are interchangeable.
+Wrist motion, head motion, and digital-pen events recorded with consumer
+wearables during desk-based writing, non-writing, and attention tasks. This
+repository holds the software that built the dataset and that loads, filters,
+and labels it.
+
+- **Article:** *A Multimodal Wrist and Head Motion Dataset for Handwriting and
+  Focus Detection with Consumer Wearables*, Data in Brief. DOI: TODO.
+- **Dataset:** Mendeley Data, CC BY-NC 4.0. DOI: TODO.
+- **Software:** this repository, Apache-2.0.
+
+The recordings come from four cohorts with different devices, sampling rates,
+and clocks. They were converted into one Apache Parquet format with
+harmonized units. Each recording keeps its native sampling rate, and a
+manifest declares which modalities, channels, devices, and clocks it has.
 
 ## Dataset scope
 
-The current release candidate contains 88 recordings across four cohorts.
+The dataset contains 88 recordings with a total duration of 33.7 h.
 
-| Cohort | Recordings | Primary modalities |
-| --- | ---: | --- |
-| ML4SCS | 33 | wrist IMU, Moleskine pen, task markers |
-| AIRPODS | 38 | head IMU, observer attention intervals |
-| ZHAW | 9 | wrist/head IMU, selected pen and marker streams |
-| MOLESKINE | 8 | watch accelerometer and Moleskine pen |
+| Cohort | `cohort` | Participants | Recordings | W | H | P | M | A |
+| --- | --- | ---: | ---: | :-: | :-: | :-: | :-: | :-: |
+| Scripted writing | `ML4SCS` | 33 | 33 | ● | – | ● | ● | – |
+| Multimodal | `ZHAW` | TODO | 9 | ● | ● | ● | ● | – |
+| Attention | `AIRPODS` | 38 | 38 | – | ● | – | – | ● |
+| Unscripted writing | `MOLESKINE` | 8 | 8 | ● | – | ● | – | – |
 
-`sessions.parquet` is the one-row-per-recording manifest.
-`channels.parquet` documents every published column's unit, semantics, sample
-rate, and time domain. Modality files use one uniform layout:
-`{modality}/{recording_id}.parquet`.
+W: wrist motion (Apple Watch). H: head motion (AirPods Pro 3). P: pen events,
+which also provide the handwriting ground truth. M: protocol markers. A:
+attention intervals.
 
-Participant identifiers are source-scoped, not a defensible count of distinct
-people across cohorts. The eight Moleskine sessions are eight different people,
-as confirmed by the data collector. They are numbered in chronological order:
-recording `MOLESKINE-S01` belongs to participant `MOLESKINE-P01`, up to `S08`
-and `P08`. Neither the raw filenames' informal labels nor the recording dates
-are published.
+Participant identifiers are numbered within each cohort, so the same number in
+two cohorts says nothing about the person. No mapping across cohorts exists.
+
+Each modality of a recording is one Parquet file:
+
+```text
+sessions.parquet / .csv   manifest, one row per recording
+channels.parquet          unit, sampling rate, and clock of every column
+data_dictionary.md        definitions of all units and terms
+watch/                    W   {recording_id}.parquet
+watch_rawaccel/           uncalibrated wrist accelerometer, 6 ZHAW recordings
+headimu/                  H
+pen/                      P
+markers/                  M
+attention/                A
+```
+
+`recording_id` joins a recording's files across all directories.
+
+## How recordings differ
+
+The cohorts were recorded with different apps and settings. The bundle keeps
+these differences and declares them per recording in `sessions.parquet`.
+Filter on these columns before you combine recordings.
+
+| | Manifest column | `ML4SCS` (33) | `ZHAW` (9) | `AIRPODS` (38) | `MOLESKINE` (8) |
+| --- | --- | --- | --- | --- | --- |
+| Acceleration | `accel_semantics` | `user` | `user` 7, `total` 2 | `user` | `total` |
+| Wrist rate | `watch_hz_measured` | 50 Hz 9, 100 Hz 24 | 100 Hz | – | 50 Hz |
+| Wrist gyroscope | `has_watch_gyro` | 33 | 9 | – | 0 |
+| Wrist gravity | `has_gravity` | 24 | 7 | – | 0 |
+| Wrist quaternion | `has_quaternion` | 19 | 9 | – | 0 |
+| Head rate | `head_hz_measured` | – | 36 or 50 Hz | 27–29 Hz | – |
+| Head gyroscope, gravity, quaternion | `has_head_*` | – | 7, 7, 9 | 38, 38, 38 | – |
+| Clock alignment | `time_alignment` | `estimated_delta` | `shared_clock` | `shared_clock` | `overlap_only` |
+| Task protocol | `protocol_id` | `ml4scs_v1` 13, `ml4scs_v2` 20 | `zhaw_web` | `airpods_p` 28, `airpods_t` 10 | – |
+
+Numbers in a cell are recordings.
+
+**Acceleration.** `user` acceleration has gravity removed, `total` includes it.
+Do not mix the two. `load_recordings` refuses to, and `fw preprocess` refuses
+unless told otherwise. `to_user_acceleration` derives `user` from `total` when
+the recording has a quaternion, which holds for the two `ZHAW` recordings. The
+`MOLESKINE` recordings have no quaternion and stay `total`.
+
+**Sampling rate.** Every stream keeps its native rate. To combine 50 Hz and
+100 Hz recordings, load them with `target_hz=50`, which downsamples with an
+anti-aliasing filter. The `_hz_measured` columns come from the median sample
+interval. AirPods deliver head motion on an uneven grid: in the `AIRPODS`
+cohort the median interval is 34 ms, but a quarter of all intervals are 56 ms
+or longer.
+
+**Clocks.** `time_alignment` states how the pen relates to the motion stream:
+
+- `shared_clock`: all modalities use one clock and can be joined directly.
+- `estimated_delta`: pen and wrist use different clocks. The offset was
+  estimated but is not applied, and `pen_delta_s` is empty on purpose.
+- `overlap_only`: pen and wrist were paired only because their wall-clock
+  ranges overlap. No offset was estimated, so sample-level joins are
+  approximate.
+
+Each recording's `alignment_note` explains its case.
+
+## Devices
+
+| Cohort | Wrist | Head | Pen | Recording software |
+| --- | --- | --- | --- | --- |
+| `ML4SCS` | Apple Watch Series 6 | – | Moleskine Smart Pen NWP-F130 | TODO |
+| `ZHAW` | Apple Watch SE (2nd generation) | AirPods Pro 3 | Neo smartpen M1 NWP-F50 (5), LAMY safari all black ncode NWP-F80 (3), unknown (1) | custom watchOS app (2), Sensor Logger (7) |
+| `AIRPODS` | – | AirPods Pro 3 | – | TODO |
+| `MOLESKINE` | Apple Watch SE (2nd generation) | – | Moleskine Smart Pen NWP-F130 | Sensor Logger, Moleskine app |
+
+`watch_model`, `head_model`, and `pen_model` in `sessions.parquet` name the
+device of each recording. One `ZHAW` recording logged no pen name, so its pen
+stays `unknown`.
+
+Wrist and head motion come from Apple Core Motion. Head motion has no
+magnetometer reference, so the yaw of the head orientation drifts. All pens are
+NeoLAB Ncode pens and report the contact states `PEN_DOWN`, `PEN_MOVE`, and
+`PEN_UP`. Pen pressure is device-native and not comparable across pen
+models: `pen_pressure_scale` names the scale of each recording.
+
+## Pen sampling rate
+
+A pen reports dots only while it touches the paper, so it has no fixed rate,
+and none of the manufacturers we checked states one. `pen_hz_measured` gives
+the dots per second within strokes. `pen_hz_clock` names the clock it was
+measured on: the pen's own clock (`src_timestamp`) where the source logs it,
+otherwise `t_ns` if it stamps dots one by one.
+
+| Pen model | Clock | Recordings | Median | Range |
+| --- | --- | ---: | ---: | --- |
+| Moleskine Smart Pen NWP-F130 (`ML4SCS`) | `src_timestamp` | 33 | 79.2 Hz | 68.2–83.5 Hz |
+| Moleskine Smart Pen NWP-F130 (`MOLESKINE`) | `t_ns` | 8 | 39.0 Hz | 31.1–39.5 Hz |
+| Neo smartpen M1 NWP-F50 | `src_timestamp` | 1 | 70.0 Hz | – |
+| LAMY safari all black ncode NWP-F80 | `src_timestamp` | 1 | 45.1 Hz | – |
+| LAMY safari all black ncode NWP-F80 | `t_ns` | 2 | 48.7 Hz | 46.9–50.5 Hz |
+| unknown | `src_timestamp` | 1 | 69.1 Hz | – |
+
+Four NWP-F50 recordings have no rate, because their `t_ns` arrives in
+Bluetooth batches that share one timestamp. The `MOLESKINE` recordings show
+about half the NWP-F130 rate of `ML4SCS`. TODO: the cause is not known yet.
+
+## Use the bundle
+
+Read the manifest first, choose recordings, then load only their samples.
+
+```python
+from focuswatch_dataset import by_flags, load_manifest, load_recording, load_recordings
+
+root = "PATH/TO/DATASET"
+manifest = load_manifest(root)
+
+# Shorthand for equality filters
+writing = by_flags(manifest, has_watch=True, has_pen=True, accel_semantics="user")
+# Any pandas expression over the manifest columns
+fast = manifest.query("cohort == 'ML4SCS' and watch_hz_measured > 90")
+
+pen = load_recording(root, writing["recording_id"].iloc[0], modality="pen")
+watch = load_recordings(root, writing["recording_id"].tolist(), modality="watch", target_hz=50)
+```
+
+`load_recordings` joins the tables of several recordings and adds a
+`recording_id` column. It refuses selections that mix data that does not
+belong together:
+
+- Wrist acceleration with and without gravity. Convert first with
+  `to_user_acceleration(df)`, which needs a quaternion.
+- Motion streams whose rates differ by more than 10 %. Pass `target_hz` to
+  downsample with an anti-aliasing filter, or `allow_mixed_rates=True` to keep
+  the native rates and get a `sample_rate_hz` column.
+- Pen tables with different coordinate or pressure scales.
+  `allow_mixed_pen_units=True` keeps them and adds the scale columns.
+
+The published files are never changed.
+
+To filter without code, `fw explore PATH/TO/DATASET` opens a terminal
+assistant. Choose a goal (writing detection, attention, or everything),
+narrow by signals, rates, and timing, and export the selection to a new
+directory. Each filter shows how many recordings it leaves, and `c` copies the
+equivalent pandas query.
 
 ## Install
 
@@ -35,17 +179,49 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.11 or later.
 ```bash
 git clone https://github.com/CH-GE-Focus-Watch/focuswatch-dataset.git
 cd focuswatch-dataset
-uv sync --all-extras
+uv sync --extra tui
 ```
 
-Use `uv sync --extra dev` for tests only or `uv sync --extra tui` for the
-terminal explorer.
+The `tui` extra is needed for `fw explore`. Use `uv sync --all-extras` to also
+install the test dependencies.
+
+## Derive training labels
+
+The bundle publishes ground truth as recorded: pen contact events and
+attention intervals. `fw preprocess` turns them into per-sample labels in a
+new directory and records every parameter in `preprocess.json`.
+
+```bash
+uv run fw preprocess --dataset PATH/TO/DATASET --task writing \
+  --gap-closing-s 3 --target-hz 50 --cohort ML4SCS --out labels-writing
+uv run fw preprocess --dataset PATH/TO/DATASET --task attention \
+  --out labels-attention
+```
+
+- `writing` adds `label_writing` to each watch table. A sample counts as
+  writing when the nearest pen event within 40 ms is `PEN_DOWN` or
+  `PEN_MOVE`. Pauses between contacts up to `--gap-closing-s` also count as
+  writing. This option has no default, because it defines what "writing"
+  means; the project uses 3 s.
+- `attention` adds `label_attention` (`focused` or `distracted`) to each head
+  motion table, from the interval that contains the sample.
+- Pen timestamps are joined as published. `--pen-shift-s` shifts them.
+  `overlap_only` recordings are skipped unless `--include-overlap-only` is
+  given.
+- `writing` refuses to mix `user` and `total` acceleration unless
+  `--allow-mixed-accel` is given. `ZHAW` contains both, so the example above
+  selects `ML4SCS` only.
+- `--cohort` and `--recording` restrict the selection.
+
+The two label columns are never merged: writing and attention are different
+questions with different ground truth. The same steps are available in Python
+through `focuswatch_dataset.preprocess.PreprocessConfig` and
+`preprocess_recordings`.
 
 ## Build and validate a bundle
 
-Raw participant data is intentionally excluded from Git. Place each source in
-a local ignored directory, extract the ML4SCS partner export, and pass every
-source explicitly:
+This step is only needed to rebuild the dataset from the raw sources, which
+are not public. Pass every source explicitly:
 
 ```bash
 uv run fw build \
@@ -62,210 +238,37 @@ uv run fw validate --dataset out/focuswatch-dataset
 uv run fw report --dataset out/focuswatch-dataset
 ```
 
-`--redact` and `--time-origin` are required so a release cannot silently
-inherit a coordinate or timestamp policy. `--time-origin recording_start`
-subtracts each recording's earliest instant from every Unix clock value, so
-the bundle no longer says on which day and at what time someone was recorded.
-Differences between samples, modalities and clocks stay unchanged.
-`unix_epoch` keeps the source clocks for internal builds. Pen coordinates
-can reconstruct handwriting; `all_xy` is the safe
-public-release choice unless consent and disclosure review explicitly approve
-another policy. `--no-strict` is for diagnostics, not publication.
+`--redact` and `--time-origin` have no default, so a release cannot inherit a
+privacy policy by accident. `all_xy` removes all pen coordinates.
+`recording_start` makes every timestamp count from the start of its
+recording, so the bundle does not reveal when someone was recorded. If any
+check fails, the build writes nothing and the previous output stays in place.
+`--no-strict` is for diagnostics only.
 
-Builds are strict and atomic by default: any source, physics, coverage, or
-manifest failure prevents replacement of the previous output. A successful
-bundle contains:
+## Limitations
 
-```text
-sessions.parquet        canonical manifest
-sessions.csv            accessible manifest copy
-channels.parquet        per-recording channel metadata
-{modality}/{recording_id}.parquet
-validation_report.json
-data_dictionary.md
-datapackage.json
-README.md
-LICENSE
-```
-
-The names are intentionally uniform. Source filenames never become output
-filenames; `recording_id` is the stable join key across the manifest, channels,
-and modality directories.
-
-## Use a published bundle
-
-Start with metadata, then load only selected recordings:
-
-```python
-from focuswatch_dataset import load_manifest, load_recordings
-
-root = "PATH/TO/DATASET"
-manifest = load_manifest(root)
-selected = manifest.query(
-    "has_watch and has_pen and accel_semantics == 'user' and watch_hz_nominal == 100"
-)
-watch = load_recordings(
-    root,
-    selected["recording_id"].head(10).tolist(),
-    modality="watch",
-)
-```
-
-`load_recordings` refuses to mix incompatible watch acceleration semantics.
-When total acceleration has a quaternion, `to_user_acceleration` can derive
-gravity-removed acceleration; without orientation, the conversion is not
-possible and the package does not guess.
-
-It also refuses motion tables whose sample rates differ by more than 10 %
-(native rates are never resampled), and pen tables whose `pen_xy_unit` or
-`pen_pressure_scale` differ. For per-recording processing, pass
-`allow_mixed_rates=True` or `allow_mixed_pen_units=True`; the loaded frame then
-carries a `sample_rate_hz` column or the two unit columns on every row.
-
-To combine 100 Hz and 50 Hz recordings, bring them to one rate while loading:
-
-```python
-watch = load_recordings(root, ids, modality="watch", target_hz=50)
-```
-
-Each recording is decimated with an anti-aliasing filter
-(`scipy.signal.decimate`, IIR, zero phase) before concatenation;
-`convert.downsample` does the same for a single table. Timestamps,
-quaternions and provenance columns keep real readings, and the published
-files are not changed.
-
-For interactive metadata filtering and subset export:
-
-```bash
-uv run fw explore PATH/TO/DATASET
-```
-
-The explorer is a three-step assistant: pick a goal ("Writing detection" for
-watch plus pen, "Attention" for head IMU plus observer annotation, or
-"Everything") and refine devices and cohorts, narrow by signals, rates and
-timing, then export. Each filter shows how many recordings it would leave, and
-the recording preview stays visible in every step. The preview names each
-recording's devices by model (for example `Watch S6 · Pen F130`). The export
-step lists the files, their size and the watch rates in the selection, and can
-bring the watch to 50 Hz (see `target_hz` above) in the same export instead of
-copying it at its native rate. Press `1`, `2`, `3` to switch steps and the
-arrow keys and space to move between and toggle filters.
-
-Filters on the same manifest field are alternatives (two cohorts select
-either), filters on different fields narrow each other. "Shared clock across
-modalities" keeps only recordings whose pen and motion timestamps can be
-joined directly. Exporting pen or observer labels also exports the watch or
-head IMU they label.
-
-Press `e` to export the selected recordings, `c` to copy the equivalent pandas
-query, `p` for provenance, and `q` to quit. Use `--export NEW/DIRECTORY` to
-choose a destination; existing directories are never overwritten.
-
-## Derive training labels
-
-The bundle publishes ground truth as recorded: pen contact events and observer
-intervals. `fw preprocess` turns them into per-sample labels in a new
-directory next to the bundle. Every choice is a parameter and is recorded in
-`preprocess.json`.
-
-```bash
-uv run fw preprocess --dataset PATH/TO/DATASET --task writing \
-  --gap-closing-s 3 --out labels-writing
-uv run fw preprocess --dataset PATH/TO/DATASET --task attention \
-  --out labels-attention
-```
-
-- `writing` adds `label_writing` to each watch table. A sample counts as
-  writing when the nearest pen event within 40 ms is a `PEN_DOWN` or
-  `PEN_MOVE`. Pauses up to `--gap-closing-s` between contacts then count as
-  writing. A pause at the very start or end of a recording is left alone.
-  `--gap-closing-s` has no default, because it defines what "writing" means.
-- `attention` adds `label_attention` (`focused` / `distracted`) to each head IMU
-  table from the observer interval that contains the sample.
-- Pen timestamps are joined as published (`--pen-shift-s 0`). Recordings with
-  `time_alignment = "overlap_only"` (Moleskine) are skipped for `writing`
-  unless `--include-overlap-only` is given, because their watch and pen clocks
-  are independent.
-- `writing` refuses a selection that mixes watch acceleration with gravity
-  (`accel_total_*`) and without it (`accel_user_*`), unless
-  `--allow-mixed-accel` is given. `preprocess.json` records each recording's
-  `accel_semantics` either way. In the current release, ZHAW-EGE-T6/T7 and
-  the Moleskine recordings are `total`; all other watch recordings are `user`.
-- `--target-hz 50` labels the downsampled timeline; `--cohort` and
-  `--recording` restrict the selection.
-- `preprocess.json` names the source bundle by its directory name only, so a
-  shared label set does not reveal a local path.
-
-The same functions are available in Python:
-
-```python
-from focuswatch_dataset.preprocess import PreprocessConfig, preprocess_recordings
-
-config = PreprocessConfig(task="writing", gap_closing_s=3.0, target_hz=50.0)
-labelled = preprocess_recordings(root, ids, config)
-```
-
-The two label columns are never merged into one: writing and attention are
-different questions with different ground truth.
-
-## Pen sampling rate
-
-A pen reports dots only while it touches the paper, so it has no fixed sample
-rate, and none of the manufacturers we checked states one. The manifest gives
-the dots per second within strokes as `pen_hz_measured` and names the clock
-it was measured on in `pen_hz_clock`. The pen's own clock (`src_timestamp`)
-is used where the source logs it. Otherwise `t_ns` is used, but only if it
-stamps dots one by one, not in Bluetooth batches. Measured on the current
-release candidate:
-
-| Pen model | Clock | Recordings | Median | Range |
-| --- | --- | ---: | ---: | --- |
-| Moleskine Smart Pen NWP-F130 | `src_timestamp` | 33 | 79.2 Hz | 68.2–83.5 Hz |
-| Moleskine Smart Pen NWP-F130 | `t_ns` | 8 | 39.0 Hz | 31.1–39.5 Hz |
-| Neo smartpen M1 NWP-F50 | `src_timestamp` | 1 | 70.0 Hz | – |
-| LAMY safari ncode NWP-F80 | `src_timestamp` | 1 | 45.1 Hz | – |
-| LAMY safari ncode NWP-F80 | `t_ns` | 2 | 48.7 Hz | 46.9–50.5 Hz |
-| unknown | `src_timestamp` | 1 | 69.1 Hz | – |
-
-Four NWP-F50 recordings stay `NaN`: their `t_ns` arrives in Bluetooth
-batches. On recordings that log both clocks, `t_ns` gave a rate 2–13 % above
-the pen clock. The eight Moleskine-cohort recordings show about half the
-NWP-F130 rate of the ML4SCS cohort; the cause is not known. Each bundle's
-`data_dictionary.md` repeats this table for its own recordings.
-
-## Important limitations
-
-- Moleskine watch and pen streams use independent wall clocks. They are paired
-  by overlapping recording ranges only; no clock offset is estimated or
-  applied, so sample-level joins are approximate.
-- Acceleration may include gravity (`total`) or exclude it (`user`). Filter on
-  `accel_semantics` before combining recordings.
-- Pen coordinates and pressure remain device-native, not millimetres or a
-  cross-device calibrated scale. See each row's `pen_xy_unit` and
-  `pen_pressure_scale`.
-- Automated validation covers structure, timing, physical plausibility,
-  redaction, and archive consistency. It does not establish participant
-  consent, redistribution rights, anonymisation sufficiency, or scientific
+- Attention labels describe the instructed task, not a verified attentional
+  state.
+- Participants are healthy adults recruited by convenience sampling. Sex and
+  gender were not recorded.
+- Pen coordinates and recording dates are not published, so handwriting shape
+  and time of day cannot be analyzed.
+- Validation covers structure, timing, physical plausibility, and redaction.
+  It does not establish consent, redistribution rights, or scientific
   validity.
 
-## Publication checklist
+## Release checklist
 
-Before creating a public archive:
-
-1. Build from a clean reviewed commit so `build_git_sha` is not suffixed
-   `-dirty`.
-2. Use an explicitly approved redaction policy and `--time-origin
-   recording_start`, and independently review pen, marker, and participant
-   metadata for disclosure risk.
-3. Confirm consent and redistribution rights for every cohort and confirm that
-   CC BY-NC 4.0 is authorised for the dataset.
-4. Run `uv run pytest` and `uv run fw validate --dataset ...`; require zero
-   failed checks.
-5. Inspect `sessions.parquet`, `validation_report.json`, and the generated
-   bundle documentation; record a checksum for the final archive.
-6. Replace the author and DOI placeholders in `CITATION.cff`, and add the final
-   dataset citation/DOI to the release record.
-7. Confirm no raw data is tracked:
+1. Build from a clean commit on `main`, so `build_git_sha` has no `-dirty`
+   suffix, with `--redact all_xy --time-origin recording_start`.
+2. Run `uv run pytest` and `uv run fw validate --dataset PATH`; both must
+   pass without failures.
+3. Confirm consent, redistribution rights, and the CC BY-NC 4.0 license for
+   every cohort.
+4. Record a SHA-256 checksum for every file of the archive.
+5. Replace the TODO markers in this README and the DOI placeholder in
+   `CITATION.cff`.
+6. Confirm that no raw data is tracked:
 
    ```bash
    git ls-files | xargs uv run python scripts/check_no_data.py
@@ -273,6 +276,6 @@ Before creating a public archive:
 
 ## License and citation
 
-The software is Apache-2.0; see [`LICENSE`](LICENSE). A generated dataset bundle
-declares CC BY-NC 4.0 separately. `CITATION.cff` describes the software and still
-contains explicit placeholders that must be completed before release.
+The software is Apache-2.0, see [`LICENSE`](LICENSE). The dataset is CC BY-NC
+4.0. When you use the data, cite the article and the dataset (DOIs: TODO).
+`CITATION.cff` describes the software.
