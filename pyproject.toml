@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "focuswatch-dataset"
-version = "0.1.0"
+version = "1.0.0"
 description = "Validated adapters and tooling for the FocusWatch multimodal sensor dataset"
 readme = "README.md"
 requires-python = ">=3.11"
