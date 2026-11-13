@@ -17,14 +17,14 @@ def test_repo_has_an_apache_2_license_file():
     assert "Version 2.0" in text
 
 
-def test_repo_has_a_citation_file_with_a_clearly_marked_doi_placeholder():
+def test_repo_has_a_citation_file_with_the_zenodo_concept_doi():
     text = (REPO_ROOT / "CITATION.cff").read_text()
     assert "cff-version" in text
     assert "type: software" in text
-    # A real Zenodo DOI cannot be filled in yet - it must not be invented,
-    # but the field must exist so the article's citation snippet has
-    # somewhere obvious to update it.
-    assert "PLACEHOLDER" in text
+    # The concept DOI, not a version DOI: it keeps resolving to the newest
+    # release, so the file stays correct after the next tag.
+    assert "\ndoi: 10.5281/zenodo.24196777\n" in text
+    assert "PLACEHOLDER" not in text
 
 
 def test_citation_file_carries_every_field_cff_1_2_0_requires():

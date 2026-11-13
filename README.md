@@ -9,7 +9,10 @@ and labels it.
   Focus Detection with Consumer Wearables*, Data in Brief. DOI: TODO.
 - **Dataset:** Mendeley Data, CC BY-NC 4.0. DOI:
   [10.17632/nt4dvs2sk4.1](https://doi.org/10.17632/nt4dvs2sk4.1).
-- **Software:** this repository, Apache-2.0.
+- **Software:** this repository, Apache-2.0. DOI:
+  [10.5281/zenodo.24196777](https://doi.org/10.5281/zenodo.24196777)
+  (all versions; v1.0.0 is
+  [10.5281/zenodo.24196778](https://doi.org/10.5281/zenodo.24196778)).
 
 The recordings come from four cohorts with different devices, sampling rates,
 and clocks. They were converted into one Apache Parquet format with
@@ -267,8 +270,8 @@ check fails, the build writes nothing and the previous output stays in place.
 3. Confirm consent, redistribution rights, and the CC BY-NC 4.0 license for
    every cohort.
 4. Record a SHA-256 checksum for every file of the archive.
-5. Replace the TODO markers in this README and the DOI placeholder in
-   `CITATION.cff`.
+5. Replace the TODO markers in this README, and set `version` and
+   `date-released` in `CITATION.cff` to the new tag.
 6. Confirm that no raw data is tracked:
 
    ```bash

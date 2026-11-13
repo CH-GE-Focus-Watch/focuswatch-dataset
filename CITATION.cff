@@ -1,5 +1,5 @@
-# Citation metadata for this Apache-2.0 software repository. The separately
-# published CC BY-NC 4.0 dataset archive will have its own citation and DOI.
+# Citation metadata for this Apache-2.0 software repository. The CC BY-NC 4.0
+# dataset is cited separately: Mendeley Data, doi:10.17632/nt4dvs2sk4.1.
 cff-version: 1.2.0
 message: If you use this software, please cite it as below.
 type: software
@@ -20,6 +20,6 @@ license: Apache-2.0
 repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
 version: 1.0.0
 date-released: 2026-11-13
-
-# PLACEHOLDER
-doi: 10.5281/zenodo.PLACEHOLDER
+# Zenodo concept DOI: resolves to the latest release. v1.0.0 is
+# 10.5281/zenodo.24196778.
+doi: 10.5281/zenodo.24196777
