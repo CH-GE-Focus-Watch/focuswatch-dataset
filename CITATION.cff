@@ -18,7 +18,8 @@ authors:
     affiliation: Zurich University of Applied Sciences (ZHAW)
 license: Apache-2.0
 repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
-version: 0.1.0
+version: 1.0.0
+date-released: 2026-11-13
 
 # PLACEHOLDER
 doi: 10.5281/zenodo.PLACEHOLDER
