@@ -1,0 +1,327 @@
+"""Generated documentation for a dataset bundle."""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pandas as pd
+
+from . import schema as S
+from .time_origin import TimeOrigin
+
+# Frictionless resource names are lowercase alphanumeric plus `.`, `-`, or `_`.
+_SLUG_INVALID = re.compile(r"[^a-z0-9._-]+")
+
+
+def _slugify(name: str) -> str:
+    return _SLUG_INVALID.sub("-", name.lower())
+
+
+# Package metadata, README and the bundled license file must name the same license.
+_DATA_LICENSE = "CC BY-NC 4.0"
+_DATA_LICENSE_SPDX = "CC-BY-NC-4.0"
+_DATA_LICENSE_URL = "https://creativecommons.org/licenses/by-nc/4.0/"
+_DATA_LICENSE_TEXT = f"""\
+FocusWatch dataset - data license
+
+The data files in this bundle (everything except this LICENSE file and the
+generated documentation) are licensed under the Creative Commons
+Attribution-NonCommercial 4.0 International License ({_DATA_LICENSE}).
+
+You are free to share and adapt this material, as long as you give
+appropriate credit, provide a link to the license, and indicate if changes
+were made. You may not use the material for commercial purposes.
+
+Full license text: {_DATA_LICENSE_URL}legalcode
+
+This license covers the DATA only. The focuswatch-dataset software that
+produced this bundle is separately licensed (Apache-2.0); see that
+project's own repository and LICENSE file.
+"""
+
+
+def write_license(out: Path) -> None:
+    (out / "LICENSE").write_text(_DATA_LICENSE_TEXT)
+
+
+def write_datapackage(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
+    # Include schema, validation, and unit-vocabulary resources for consumers.
+    resources = [
+        {"name": "sessions", "path": "sessions.csv", "format": "csv"},
+        {"name": "sessions-parquet", "path": "sessions.parquet", "format": "parquet"},
+        {"name": "channels", "path": "channels.parquet", "format": "parquet"},
+        {"name": "data-dictionary", "path": "data_dictionary.md", "format": "markdown"},
+        {"name": "validation-report", "path": "validation_report.json", "format": "json"},
+    ]
+    for modality in S.MODALITIES:
+        d = out / modality
+        for f in sorted(d.glob("*.parquet")) if d.exists() else []:
+            resources.append({"name": _slugify(f"{modality}-{f.stem}"),
+                              "path": f"{modality}/{f.name}", "format": "parquet"})
+    (out / "datapackage.json").write_text(json.dumps({
+        "profile": "data-package", "name": "focuswatch-dataset",
+        "title": "FocusWatch: wrist and head IMU with pen and observer ground truth",
+        "licenses": [{"name": _DATA_LICENSE_SPDX, "path": _DATA_LICENSE_URL}],
+        "version": S.SCHEMA_VERSION, "resources": resources,
+    }, indent=2))
+
+
+def _modality_file_counts(out: Path) -> dict[str, int]:
+    counts = {}
+    for modality in S.MODALITIES:
+        d = out / modality
+        counts[modality] = len(list(d.glob("*.parquet"))) if d.exists() else 0
+    return counts
+
+
+def write_readme(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
+    """Write the bundle README and recipe chapters.
+
+    Every count below is read from `manifest`/`channels`/`out` itself - not
+    restated, so it cannot drift from the archive it describes.
+    """
+    counts = _modality_file_counts(out)
+    n_recordings = len(manifest)
+    n_participants = int(manifest["participant_id"].nunique())
+    identifier_noun = "identifier" if n_participants == 1 else "identifiers"
+    redaction_policy = str(manifest["redaction_policy"].iloc[0])
+    time_origin = str(manifest["time_origin"].iloc[0])
+    has_overlap_only = bool(
+        (manifest["time_alignment"] == S.TIME_ALIGNMENT_OVERLAP_ONLY).any()
+    )
+    cohort_counts = manifest.groupby("cohort").size().sort_index()
+
+    lines = [
+        "# FocusWatch dataset", "",
+        "Wrist and head IMU, pen and observer-annotation ground truth for a",
+        f"handwriting-detection study. {n_recordings} recordings, "
+        f"{n_participants} participant {identifier_noun}, schema version "
+        f"{S.SCHEMA_VERSION}.", "",
+        # Why: "participants" is the N a citing paper will quote, and this count
+        # cannot support it. Identifiers are namespaced per cohort, so the
+        # number would be identical even if every cohort had recorded the
+        # same people - the cohorts were run by different teams and no mapping
+        # between them exists.
+        "Identifiers are source-scoped, so this is not a count of established distinct "
+        "people: no complete mapping across cohorts or sources exists.", "",
+        "## Contents", "",
+        "| file | rows | what it is |",
+        "|---|---|---|",
+        f"| `sessions.parquet` / `sessions.csv` | {n_recordings} | the manifest - one row per "
+        "recording: every capability flag (`has_watch`, `has_pen`, ...), timing and protocol field |",
+        f"| `channels.parquet` | {len(channels)} | one row per (recording, modality, column): unit, "
+        "semantics, sample rate, time domain |",
+        "| `data_dictionary.md` | - | the canonical unit vocabulary, and what is/isn't harmonised "
+        "across sources |",
+        "| `validation_report.json` | - | every physical/structural check this build ran, and "
+        "whether it passed |",
+        "| `datapackage.json` | - | machine-readable Frictionless Data Package descriptor |",
+        f"| `LICENSE` | - | the data license ({_DATA_LICENSE}) |",
+    ]
+    for modality in S.MODALITIES:
+        if counts[modality]:
+            lines.append(f"| `{modality}/{{recording_id}}.parquet` | {counts[modality]} files | "
+                        f"see `channels.parquet` (`modality == \"{modality}\"`) for its columns |")
+    lines += [
+        "", "## Quick start", "",
+        "```python",
+        "from focuswatch_dataset import load_manifest, load_recording, by_flags", "",
+        'root = "."  # the directory this README is in',
+        "m = load_manifest(root)", "",
+        "# every recording with a watch stream",
+        "subset = by_flags(m, has_watch=True)", "",
+        'rid = subset.iloc[0]["recording_id"]',
+        'df = load_recording(root, rid, modality="watch")',
+        "```", "",
+        "## Recipes", "",
+        "- **Select recordings by capability**: `m.query(...)` (any pandas expression over "
+        "`sessions.parquet`'s columns), or `by_flags(m, has_pen=True, ...)` for the equality-only "
+        "shorthand.",
+        '- **Load one recording\'s table**: `load_recording(root, recording_id, modality="watch")`.',
+        "- **Load several at once**: `load_recordings(root, recording_ids, modality=\"watch\")` - "
+        "refuses to silently mix `user` and `total` acceleration semantics.",
+        "- **Total acceleration but you need gravity removed**: when `has_quaternion` is true, "
+        "`to_user_acceleration(df)` derives it from orientation. Without a quaternion this "
+        "conversion is not available, and the bundle does not guess.",
+        "- **What did this build verify?**: read `validation_report.json` - every physical check, "
+        "per recording, with the observed value and the tolerance it was checked against.",
+        "", "## Limitations", "",
+        f"- This bundle's pen-coordinate redaction policy is `{redaction_policy}`; see "
+        "`sessions.parquet` for the per-recording declaration.",
+        f"- This bundle's time origin is `{time_origin}`. Under `recording_start` every "
+        "timestamp counts from the start of its own recording, so the dates and times of "
+        "day of the sessions are not published; see the data dictionary.",
+        "- Acceleration semantics vary by source. Filter on `accel_semantics` before "
+        "combining recordings.",
+        "- Pen coordinates and pressure are device-native, not millimetres or a "
+        "cross-device calibrated scale.",
+        "- Automated validation covers structure, timing, physical plausibility, redaction, "
+        "and archive consistency. It does not establish participant consent, redistribution "
+        "rights, anonymisation sufficiency, or scientific validity.",
+    ]
+    if has_overlap_only:
+        lines += [
+            "- Recordings with `time_alignment = \"overlap_only\"` pair independent wall "
+            "clocks by overlapping ranges; no offset is applied, so sample-level joins are "
+            "approximate. Read `alignment_note` before combining modalities."
+        ]
+    lines += [
+        "", "## License", "",
+        f"The data in this bundle is {_DATA_LICENSE} - see `LICENSE`. The `focuswatch-dataset` software "
+        "that produced it is Apache-2.0, in its own source repository.",
+        "", "## Corpus by cohort", "",
+        "| cohort | recordings |",
+        "|---|---|",
+    ]
+    for cohort, n in cohort_counts.items():
+        lines.append(f"| {cohort} | {n} |")
+    (out / "README.md").write_text("\n".join(lines) + "\n")
+
+
+# Standalone glossary for the non-physical unit vocabulary.
+_UNIT_VOCABULARY = (
+    ("category", "one of a fixed, enumerated set of string values."),
+    ("ordinal", "the position of an item within a sequence, not a magnitude "
+               "(e.g. `task_index`)."),
+    ("device_native", "a raw value in the source stream's own scale. For pen `x`/`y`/"
+                      "`pressure`, consult that recording's `pen_xy_unit` and "
+                      "`pen_pressure_scale` in `sessions.parquet`."),
+    ("source_native", "a `src_`-prefixed provenance passthrough column: the source "
+                      "device's own value, kept for audit, never reinterpreted or rescaled."),
+    ("n/a", "no physical or source unit applies (e.g. a categorical id)."),
+)
+
+# Fixed time-domain overrides for src_-prefixed provenance columns. A
+# modality's primary clock remains adapter-defined.
+_TIME_DOMAIN_OVERRIDE_VOCABULARY = (
+    (S.TIME_DOMAIN_PEN_DEVICE_CLOCK, "the pen hardware's free-running clock. It is not aligned "
+                                     "to a bundle wall clock and must not be used for joins."),
+    (S.TIME_DOMAIN_SESSION_RELATIVE_OFFSET_MS, "milliseconds since this recording's own session "
+                                               "start - not a wall-clock reading at all, so no "
+                                               "clock name would be honest."),
+    (S.TIME_DOMAIN_PHONE_WALL_CLOCK, "a phone bridge wall clock, distinct from the motion "
+                                     "device's capture clock."),
+    (S.TIME_DOMAIN_DEVICE_MONOTONIC_CLOCK, "a free-running uptime clock, not a wall-clock epoch."),
+)
+
+
+def _pen_rate_summary(manifest: pd.DataFrame) -> list[str]:
+    pen = manifest[manifest["has_pen"]]
+    if pen.empty:
+        return []
+    lines = ["Measured rates per pen model in this bundle:", "",
+             "| pen_model | pen_hz_clock | recordings | median Hz | range Hz |",
+             "|---|---|---:|---:|---|"]
+    for (model, clock), group in pen.groupby(["pen_model", "pen_hz_clock"]):
+        hz = group["pen_hz_measured"].dropna()
+        median, span = ((f"{hz.median():.1f}", f"{hz.min():.1f}-{hz.max():.1f}") if len(hz)
+                        else ("-", "-"))
+        lines.append(f"| {model} | {f'`{clock}`' if clock else 'empty'} | {len(group)} "
+                     f"| {median} | {span} |")
+    return [*lines, ""]
+
+
+def write_data_dictionary(out: Path, manifest: pd.DataFrame, channels: pd.DataFrame) -> None:
+    # channels.parquet declares time domains per recording, modality, and
+    # column because canonical and provenance timestamps can use different clocks.
+    if str(manifest["time_origin"].iloc[0]) == TimeOrigin.RECORDING_START:
+        time_unit = ("timestamps as int64 nanoseconds since the start of the recording "
+                     "(`time_origin = \"recording_start\"`)")
+    else:
+        time_unit = "timestamps as int64 Unix nanoseconds"
+    lines = ["# Data dictionary", "",
+             "Units are canonical across the bundle: acceleration and gravity in g,",
+             "angular velocity in rad/s, quaternions scalar-last (x, y, z, w),",
+             f"{time_unit}. `time_domain` is named per",
+             "(recording, modality, column) in this table, and it answers one question",
+             "per kind of column: a TIME-VALUED column declares the clock ITS OWN VALUES",
+             "are expressed in; every other column declares the clock ITS ROW is stamped",
+             "on, which is that modality's default. So `pen.src_timestamp` reads",
+             "`pen_device_clock` because that is what its numbers are, while",
+             "`pen.pressure` carries the modality's own clock because that is when it",
+             "was measured. What a column holds is stated by `quantity` and `unit`, not",
+             "by this field. The recording-level `time_domain` in `sessions.parquet` names",
+             "only the primary motion stream. Consult `channels.parquet` before joining",
+             "modalities or provenance timestamps. For `time_alignment = \"estimated_delta\"`,",
+             "read `alignment_note`; `pen_delta_sigma` is the estimate's confidence, not an",
+             "offset value. For `time_alignment = \"overlap_only\"`, the independently",
+             "maintained device clocks only establish coarse recording membership, not exact",
+             "sample alignment.", "",
+             "Pen rows with `x = y = -1` are framing events without a position. They are",
+             "retained deliberately; treating them as measurements skews any positional statistic.", "",
+             "## Unit vocabulary", "",
+             "Physical quantities carry their own unit directly. Every other column's `unit` "
+             "cell is one of:", "",
+             "| value | meaning |", "|---|---|"]
+    for value, meaning in _UNIT_VOCABULARY:
+        lines.append(f"| `{value}` | {meaning} |")
+
+    lines += [
+        "", "## Time domain vocabulary", "",
+        "A modality's default `time_domain` names its capture pipeline clock. A `src_` "
+        "provenance column may use a different clock and therefore has an explicit "
+        "per-column override in the Channels table. The following terms describe those "
+        "overrides:", "",
+        "| value | meaning |", "|---|---|"]
+    for value, meaning in _TIME_DOMAIN_OVERRIDE_VOCABULARY:
+        lines.append(f"| `{value}` | {meaning} |")
+
+    lines += [
+        "", "## Time origin", "",
+        "`time_origin` in `sessions.parquet` states where the timestamps count from.",
+        "",
+        "| value | meaning |", "|---|---|",
+        "| `unix_epoch` | Every clock value is as the source logged it, in Unix time. |",
+        "| `recording_start` | The earliest instant of each recording was subtracted from every "
+        "Unix clock value of that recording: `t_ns`, `t_start_ns`, `t_end_ns`, the Unix "
+        "millisecond `src_` columns and the Unix millisecond marker payload fields. "
+        "Differences between samples, modalities and clocks are unchanged, and a "
+        "`src_` clock that ran off by days still shows that offset. |",
+        "", "## Time alignment vocabulary", "",
+        "| value | meaning |", "|---|---|",
+        "| `shared_clock` | Modalities use the same capture or backend clock. |",
+        "| `estimated_delta` | An inter-clock offset was estimated but is not applied; read "
+        "`alignment_note`. |",
+        "| `overlap_only` | Independent wall-clock ranges overlap, but no offset was estimated "
+        "or applied; cross-modal sample joins are approximate. |",
+    ]
+
+    lines += [
+        "", "## Pen coordinate representation", "",
+        "Pen `x`, `y`, and `pressure` use device-native scales. They are not comparable "
+        "across all recordings and are not a millimetre conversion. Use each recording's "
+        "`pen_xy_unit` and `pen_pressure_scale` from `sessions.parquet` when interpreting "
+        "them. Some recordings do not contain pen tilt or a pen-device timestamp; missing "
+        "values are represented as `NaN`, not inferred. Coordinate scales can also change "
+        "within a recording, so inspect or segment the trace before using positional "
+        "statistics.", "",
+        "## Pen sampling rate", "",
+        "A pen reports dots only while it touches the paper, so it has no fixed sample "
+        "rate. `pen_hz_measured` in `sessions.parquet`, and `sample_rate_hz` on the pen "
+        "rows of `channels.parquet`, give the dots per second within strokes. "
+        "`pen_hz_clock` names the clock it was measured on:", "",
+        "| `pen_hz_clock` | Meaning |",
+        "|---|---|",
+        "| `src_timestamp` | The pen's own clock. Preferred wherever the source logs it. |",
+        "| `t_ns` | No pen clock is logged, and at most 20 % of the intervals within strokes "
+        "are zero, so `t_ns` stamps dots one by one. On recordings that log both clocks, "
+        "`t_ns` at this level gave a rate 2-13 % above the pen clock. |",
+        "| empty | Not measurable: `pen_hz_measured` is `NaN`. `t_ns` is the backend's "
+        "arrival time in Bluetooth batches that share one timestamp and would inflate "
+        "the rate. |", "",
+        "Dots are also dropped during fast strokes, so the rate is an average, not a "
+        "fixed sensor frequency. There is no nominal pen rate: the manufacturer "
+        "specifications we found do not state one.", "",
+        *_pen_rate_summary(manifest)]
+
+    summary = (channels.groupby(["modality", "column", "quantity", "unit", "semantics", "time_domain"])
+               .size().reset_index(name="recordings"))
+    lines += ["## Channels", "", "| modality | column | quantity | unit | semantics | "
+              "time_domain | recordings |",
+              "|---|---|---|---|---|---|---|"]
+    for _, r in summary.iterrows():
+        lines.append(f"| {r.modality} | {r.column} | {r.quantity} | {r.unit} | "
+                     f"{r.semantics} | {r.time_domain} | {r.recordings} |")
+
+    (out / "data_dictionary.md").write_text("\n".join(lines) + "\n")

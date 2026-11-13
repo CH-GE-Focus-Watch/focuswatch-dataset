@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "focuswatch-dataset"
+version = "0.1.0"
+description = "Validated adapters and tooling for the FocusWatch multimodal sensor dataset"
+readme = "README.md"
+requires-python = ">=3.11"
+# The software is Apache-2.0; the separately released dataset is CC BY-NC 4.0.
+license = "Apache-2.0"
+dependencies = [
+    "pandas>=2.0",
+    # Why: the Parquet footer records `created_by: parquet-cpp-arrow <version>`,
+    # so byte-level reproducibility of a release holds only within a major version.
+    "pyarrow>=24.0,<25.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "hypothesis>=6.100"]
+tui = ["textual>=0.56"]
+
+[project.scripts]
+fw = "focuswatch_dataset.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/focuswatch_dataset"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.hypothesis",
+    "/.pytest_cache",
+    "/.venv",
+    "/data",
+    "/out",
+    "/alldata",
+    "/docs/superpowers",
+    "/docs/DESIGN.md",
+    "/docs/PLAN.md",
+    "/focuswatch-selection*",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
