@@ -7,7 +7,8 @@ and labels it.
 
 - **Article:** *A Multimodal Wrist and Head Motion Dataset for Handwriting and
   Focus Detection with Consumer Wearables*, Data in Brief. DOI: TODO.
-- **Dataset:** Mendeley Data, CC BY-NC 4.0. DOI: TODO.
+- **Dataset:** Mendeley Data, CC BY-NC 4.0. DOI:
+  [10.17632/nt4dvs2sk4.1](https://doi.org/10.17632/nt4dvs2sk4.1).
 - **Software:** this repository, Apache-2.0.
 
 The recordings come from four cohorts with different devices, sampling rates,
@@ -277,5 +278,6 @@ check fails, the build writes nothing and the previous output stays in place.
 ## License and citation
 
 The software is Apache-2.0, see [`LICENSE`](LICENSE). The dataset is CC BY-NC
-4.0. When you use the data, cite the article and the dataset (DOIs: TODO).
+4.0. When you use the data, cite the article (DOI: TODO) and the dataset
+(DOI: [10.17632/nt4dvs2sk4.1](https://doi.org/10.17632/nt4dvs2sk4.1)).
 `CITATION.cff` describes the software.

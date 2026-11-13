@@ -10,8 +10,12 @@ abstract: >-
   for a journal data descriptor.
 
 authors:
-  - family-names:
-    given-names:
+  - family-names: Samel
+    given-names: Noah
+    affiliation: Leuphana University Lüneburg
+  - family-names: Salerno
+    given-names: Elia
+    affiliation: Zurich University of Applied Sciences (ZHAW)
 license: Apache-2.0
 repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
 version: 0.1.0
