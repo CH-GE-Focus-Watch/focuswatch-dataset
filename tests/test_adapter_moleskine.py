@@ -86,6 +86,26 @@ def test_discovery_rejects_a_session_without_an_assigned_participant(tmp_path):
         MoleskineAdapter().discover(tmp_path)
 
 
+def test_discovery_skips_an_excluded_session(tmp_path, monkeypatch):
+    from focuswatch_dataset.adapters import moleskine
+
+    write_fixture(tmp_path)
+    [ref] = MoleskineAdapter().discover(tmp_path)
+    key = next(k for k, number in moleskine._SESSION_BY_START.items()
+               if f"S{number}" in ref.recording_id)
+    monkeypatch.setattr(moleskine, "_EXCLUDED_STARTS", frozenset({key}))
+
+    assert MoleskineAdapter().discover(tmp_path) == []
+
+
+def test_published_session_numbers_are_contiguous_and_exclusions_unnumbered():
+    from focuswatch_dataset.adapters import moleskine
+
+    numbers = sorted(moleskine._SESSION_BY_START.values())
+    assert numbers == [f"{i:02d}" for i in range(1, len(numbers) + 1)]
+    assert not moleskine._EXCLUDED_STARTS & moleskine._SESSION_BY_START.keys()
+
+
 def test_watch_model_is_se_2(tmp_path):
     write_fixture(tmp_path)
     adapter = MoleskineAdapter()

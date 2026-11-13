@@ -39,23 +39,29 @@ _DRAW_TYPES = {17: "PEN_DOWN", 18: "PEN_MOVE", 20: "PEN_UP"}
 # view; it is not a cryptographic guarantee.
 _SESSION_BY_START = {
     "dfc2188da4de34e9": "01",
-    "3a8d807106380f4a": "02",
-    "97b3341c44693524": "03",
-    "34f6ee61f8623b6f": "04",
-    "994b83957ab7f63f": "05",
-    "4712ccaf3f9d1493": "06",
-    "e8807e082959d6d3": "07",
-    "43ef83326fb4ec6d": "08",
+    "97b3341c44693524": "02",
+    "34f6ee61f8623b6f": "03",
+    "994b83957ab7f63f": "04",
+    "4712ccaf3f9d1493": "05",
+    "e8807e082959d6d3": "06",
+    "43ef83326fb4ec6d": "07",
 }
+
+# Sessions the data collector withdrew from the release (2026-11-13). The
+# source export still contains them, so discovery skips their start keys
+# instead of failing on an unnumbered start. The numbering above closes the gap; this
+# was done before the first publication, so no public id changed meaning.
+_EXCLUDED_STARTS = frozenset({
+    "3a8d807106380f4a",
+})
 
 
 def _database_path(watch_path: Path) -> Path:
     return watch_path.parent.parent / "moleskine" / "backup-db" / "note.db"
 
 
-def _session_number(t_ns: int) -> str | None:
-    key = hashlib.sha256(str(t_ns // 1_000_000).encode()).hexdigest()[:16]
-    return _SESSION_BY_START.get(key)
+def _start_key(t_ns: int) -> str:
+    return hashlib.sha256(str(t_ns // 1_000_000).encode()).hexdigest()[:16]
 
 
 class MoleskineAdapter:
@@ -79,7 +85,10 @@ class MoleskineAdapter:
             times = pd.read_csv(path, usecols=[_TIME])
             if times.empty:
                 raise ValueError(f"{path}: watch CSV is empty")
-            number = _session_number(int(parse_iso_to_unix_ns(times[_TIME]).min()))
+            key = _start_key(int(parse_iso_to_unix_ns(times[_TIME]).min()))
+            if key in _EXCLUDED_STARTS:
+                continue
+            number = _SESSION_BY_START.get(key)
             # The filename labels are never used: three files carry informal
             # labels, two of them first names, which would leak into public ids.
             if number is None:

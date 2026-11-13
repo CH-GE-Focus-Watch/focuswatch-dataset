@@ -17,14 +17,14 @@ manifest declares which modalities, channels, devices, and clocks it has.
 
 ## Dataset scope
 
-The dataset contains 88 recordings with a total duration of 33.7 h.
+The dataset contains 87 recordings with a total duration of 33.0 h.
 
 | Cohort | `cohort` | Participants | Recordings | W | H | P | M | A |
 | --- | --- | ---: | ---: | :-: | :-: | :-: | :-: | :-: |
 | Scripted writing | `ML4SCS` | 33 | 33 | ● | – | ● | ● | – |
 | Multimodal | `ZHAW` | TODO | 9 | ● | ● | ● | ● | – |
 | Attention | `AIRPODS` | 38 | 38 | – | ● | – | – | ● |
-| Unscripted writing | `MOLESKINE` | 8 | 8 | ● | – | ● | – | – |
+| Unscripted writing | `MOLESKINE` | 7 | 7 | ● | – | ● | – | – |
 
 W: wrist motion (Apple Watch). H: head motion (AirPods Pro 3). P: pen events,
 which also provide the handwriting ground truth. M: protocol markers. A:
@@ -55,7 +55,7 @@ The cohorts were recorded with different apps and settings. The bundle keeps
 these differences and declares them per recording in `sessions.parquet`.
 Filter on these columns before you combine recordings.
 
-| | Manifest column | `ML4SCS` (33) | `ZHAW` (9) | `AIRPODS` (38) | `MOLESKINE` (8) |
+| | Manifest column | `ML4SCS` (33) | `ZHAW` (9) | `AIRPODS` (38) | `MOLESKINE` (7) |
 | --- | --- | --- | --- | --- | --- |
 | Acceleration | `accel_semantics` | `user` | `user` 7, `total` 2 | `user` | `total` |
 | Wrist rate | `watch_hz_measured` | 50 Hz 9, 100 Hz 24 | 100 Hz | – | 50 Hz |
@@ -123,7 +123,7 @@ otherwise `t_ns` if it stamps dots one by one.
 | Pen model | Clock | Recordings | Median | Range |
 | --- | --- | ---: | ---: | --- |
 | Moleskine Smart Pen NWP-F130 (`ML4SCS`) | `src_timestamp` | 33 | 79.2 Hz | 68.2–83.5 Hz |
-| Moleskine Smart Pen NWP-F130 (`MOLESKINE`) | `t_ns` | 8 | 39.0 Hz | 31.1–39.5 Hz |
+| Moleskine Smart Pen NWP-F130 (`MOLESKINE`) | `t_ns` | 7 | 39.1 Hz | 31.1–39.5 Hz |
 | Neo smartpen M1 NWP-F50 | `src_timestamp` | 1 | 70.0 Hz | – |
 | LAMY safari all black ncode NWP-F80 | `src_timestamp` | 1 | 45.1 Hz | – |
 | LAMY safari all black ncode NWP-F80 | `t_ns` | 2 | 48.7 Hz | 46.9–50.5 Hz |
