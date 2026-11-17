@@ -1,0 +1,31 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/ -v
+      - name: data-policy guard over tracked files
+        run: git ls-files | xargs python scripts/check_no_data.py
+  tui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -e ".[dev,tui]"
+      - run: pytest tests/test_tui.py -v
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      # tui extra: mypy checks tui.py, which imports textual.
+      - run: pip install -e ".[tui]" mypy==2.4.1 pyflakes==3.4.0
+      - run: mypy
+      - run: pyflakes src tests scripts examples

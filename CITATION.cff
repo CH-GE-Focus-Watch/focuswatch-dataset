@@ -1,0 +1,29 @@
+# Citation metadata for this Apache-2.0 software repository. The CC BY-NC 4.0
+# dataset is cited separately: Mendeley Data, doi:10.17632/nt4dvs2sk4.1.
+cff-version: 1.2.0
+message: If you use this software, please cite it as below.
+type: software
+title: focuswatch-dataset
+abstract: >-
+  Converts heterogeneous wrist/head-IMU, pen and attention-label
+  capture pipelines into one canonical, physically validated Parquet dataset
+  for a journal data descriptor.
+
+authors:
+  - family-names: Samel
+    given-names: Noah
+    affiliation: Leuphana University Lüneburg
+  - family-names: Salerno
+    given-names: Elia
+    affiliation: Zurich University of Applied Sciences (ZHAW)
+  - family-names: Seçgin
+    given-names: Ege
+    affiliation: Zurich University of Applied Sciences (ZHAW)
+  - family-names: Soltau
+    given-names: Gerrit
+    affiliation: Leuphana University Lüneburg
+license: Apache-2.0
+repository-code: https://github.com/CH-GE-Focus-Watch/focuswatch-dataset
+version: 1.0.0
+date-released: 2026-11-17
+doi: 10.5281/zenodo.24303697

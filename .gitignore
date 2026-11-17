@@ -1,0 +1,20 @@
+# Build output and any dataset artefact must never enter the tree.
+build/
+dist/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+out/
+data/
+alldata/
+*.parquet
+*.zip
+
+.DS_Store
+
+# Local metadata selections and exported subsets are never release artefacts.
+focuswatch-selection.json
+focuswatch-selection-*/
+
+# IDE state - never part of a published code artefact
+.idea/
